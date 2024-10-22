@@ -61,27 +61,27 @@ elseif (GEODE_TARGET_PLATFORM STREQUAL "MacOS")
 	else()
 		set(GEODE_TARGET_PLATFORM_SHORT "mac")
 	endif()
-elseif (GEODE_TARGET_PLATFORM STREQUAL "Win64")
+elseif (GEODE_TARGET_PLATFORM STREQUAL "Win32")
 	set_target_properties(${PROJECT_NAME} PROPERTIES
-		SYSTEM_NAME Win64
-		GENERATOR_PLATFORM x64
+		SYSTEM_NAME Win32
+		GENERATOR_PLATFORM x86
 	)
 
 	target_compile_definitions(${PROJECT_NAME} INTERFACE NOMINMAX)
 
 	target_link_libraries(${PROJECT_NAME} INTERFACE 
-		${GEODE_LOADER_PATH}/include/link/win64/libcocos2d.lib
-		${GEODE_LOADER_PATH}/include/link/win64/libExtensions.lib
-		${GEODE_LOADER_PATH}/include/link/win64/ssl.lib
-		${GEODE_LOADER_PATH}/include/link/win64/crypto.lib
-		${GEODE_LOADER_PATH}/include/link/win64/nghttp2.lib
-		${GEODE_LOADER_PATH}/include/link/win64/ngtcp2.lib
-		${GEODE_LOADER_PATH}/include/link/win64/nghttp3.lib
-		${GEODE_LOADER_PATH}/include/link/win64/ngtcp2_crypto_boringssl.lib
-		${GEODE_LOADER_PATH}/include/link/win64/libcurl.lib
-		${GEODE_LOADER_PATH}/include/link/win64/glew32.lib
-		${GEODE_LOADER_PATH}/include/link/win64/gdstring.lib
-		${GEODE_LOADER_PATH}/include/link/win64/fmod.lib
+		${GEODE_LOADER_PATH}/include/link/win32/libcocos2d.lib
+		${GEODE_LOADER_PATH}/include/link/win32/libExtensions.lib
+		${GEODE_LOADER_PATH}/include/link/win32/ssl.lib
+		${GEODE_LOADER_PATH}/include/link/win32/crypto.lib
+		${GEODE_LOADER_PATH}/include/link/win32/nghttp2.lib
+		${GEODE_LOADER_PATH}/include/link/win32/ngtcp2.lib
+		${GEODE_LOADER_PATH}/include/link/win32/nghttp3.lib
+		${GEODE_LOADER_PATH}/include/link/win32/ngtcp2_crypto_boringssl.lib
+		${GEODE_LOADER_PATH}/include/link/win32/libcurl.lib
+		${GEODE_LOADER_PATH}/include/link/win32/glew32.lib
+		${GEODE_LOADER_PATH}/include/link/win32/gdstring.lib
+		${GEODE_LOADER_PATH}/include/link/win32/fmod.lib
 		opengl32
 	)
 
