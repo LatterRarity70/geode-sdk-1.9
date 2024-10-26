@@ -119,23 +119,17 @@ public:
     void stopStroke();
 
 	// @note RobTop Addition
-    void enableRepeatMode(float);
+    virtual float getM_fMaxSeg() const;
+	// @note RobTop Addition
+    virtual void setM_fMaxSeg(float);
 
 	// @note RobTop Addition
-    bool getDontOpacityFade() const;
+    virtual bool getDontOpacityFade() const;
 	// @note RobTop Addition
-    void setDontOpacityFade(bool);
-
-	// @note RobTop Addition
-    float getM_fMaxSeg() const;
-	// @note RobTop Addition
-    void setM_fMaxSeg(float);
+    virtual void setDontOpacityFade(bool);
 
     // @note RobTop Addition
 	void setStroke(float);
-    // @note RobTop Addition
-	void updateFade(float);
-
 
     /** When fast mode is enabled, new points are added faster but with lower precision */
     inline bool isFastMode() {
@@ -180,19 +174,9 @@ protected:
     ccTex2F* m_pTexCoords;
 
     // @note RobTop Addition
-    bool m_bRepeatMode;
-    // @note RobTop Addition
-    float m_fRepeatSpeed;
-    // @note RobTop Addition
-    float m_fRepeatTime;
-    // @note RobTop Addition
-    bool m_idk;
-    // @note RobTop Addition
     float m_fMaxSeg;
     // @note RobTop Addition
     bool m_bDontOpacityFade;
-    // @note RobTop Addition
-    CCPoint m_tPositionR;
 };
 
 // end of misc_nodes group

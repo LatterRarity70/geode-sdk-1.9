@@ -355,15 +355,7 @@ enum class UnlockType {
     Ship = 0x4,
     Ball = 0x5,
     Bird = 0x6,
-    Dart = 0x7,
-    Robot = 0x8,
-    Spider = 0x9,
-    Streak = 0xA,
-    Death = 0xB,
-    GJItem = 0xC,
-    Swing = 0xD,
-    Jetpack = 0xE,
-    ShipFire = 0xF
+    Streak = 0x7
 };
 
 enum class SpecialRewardItem {

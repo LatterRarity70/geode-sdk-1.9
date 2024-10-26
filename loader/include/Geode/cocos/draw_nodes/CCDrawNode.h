@@ -58,7 +58,7 @@ protected:
     
     bool            m_bDirty;
     
-
+/*
     // @note RobTop Addition
     bool            m_bUseArea;
     // @note RobTop Addition
@@ -71,6 +71,7 @@ protected:
     float           m_fMaxAreaY;
     // @note RobTop Addition
     float           m_fMinAreaY;
+*/
 
 public:
     static CCDrawNode* create();
