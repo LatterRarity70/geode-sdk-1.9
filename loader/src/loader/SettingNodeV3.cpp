@@ -224,7 +224,7 @@ bool TitleSettingNodeV3::init(std::shared_ptr<TitleSettingV3> setting, float wid
     if (!SettingNodeV3::init(setting, width))
         return false;
     
-    auto collapseSprBG = CCSprite::create("square02c_001.png");
+    auto collapseSprBG = CCSprite::create("square02b_001.png");
     collapseSprBG->setColor(ccc3(25, 25, 25));
     collapseSprBG->setOpacity(105);
     auto collapseSpr = CCSprite::createWithSpriteFrameName("edit_downBtn_001.png");
@@ -232,10 +232,11 @@ bool TitleSettingNodeV3::init(std::shared_ptr<TitleSettingV3> setting, float wid
     collapseSprBG->addChildAtPosition(collapseSpr, Anchor::Center);
     collapseSprBG->setScale(.2f);
 
-    auto uncollapseSprBG = CCSprite::create("square02c_001.png");
+    auto uncollapseSprBG = CCSprite::create("square02b_001.png");
     uncollapseSprBG->setColor(ccc3(25, 25, 25));
     uncollapseSprBG->setOpacity(105);
-    auto uncollapseSpr = CCSprite::createWithSpriteFrameName("edit_delCBtn_001.png");
+    auto uncollapseSpr = CCSprite::createWithSpriteFrameName("edit_downBtn_001.png");
+    uncollapseSpr->setFlipY(true);
     uncollapseSpr->setScale(1.5f);
     uncollapseSprBG->addChildAtPosition(uncollapseSpr, Anchor::Center);
     uncollapseSprBG->setScale(.2f);
