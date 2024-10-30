@@ -96,5 +96,31 @@ Result<> Mod::Impl::loadPlatformBinary() {
 }
 
 Result<> Mod::Impl::loadInternalBinary() {
-    return Err("Unimplemented");
+    if (!m_metadata.getInternalBinary()) {
+        return Ok();
+    }
+
+    auto internalBinary = *m_metadata.getInternalBinary();
+    auto internalBinaryFilename = internalBinary + ".dll";
+    auto filenameW = utils::string::utf8ToWide(internalBinaryFilename);
+
+    auto load = LoadLibraryExW(filenameW.c_str(), nullptr, LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (load) {
+        if (m_platformInfo) {
+            delete m_platformInfo;
+        }
+        m_platformInfo = new PlatformInfo { load };
+
+        auto geodeImplicitEntry = findSymbolOrMangled<void(*)()>(load, "geodeImplicitEntry", "_geodeImplicitEntry@0");
+        if (geodeImplicitEntry) {
+            geodeImplicitEntry();
+        }
+
+        auto geodeCustomEntry = findSymbolOrMangled<void(*)()>(load, "geodeCustomEntry", "_geodeCustomEntry@0");
+        if (geodeCustomEntry) {
+            geodeCustomEntry();
+        }
+        return Ok();
+    }
+    return Err("Unable to load the DLL: " + getLastWinError());
 }

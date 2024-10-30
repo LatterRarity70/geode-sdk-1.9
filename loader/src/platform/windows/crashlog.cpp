@@ -91,8 +91,6 @@ static Mod* modFromAddress(PVOID exceptionAddress) {
     return nullptr;
 }
 
-PVOID GeodeFunctionTableAccess64(HANDLE hProcess, DWORD64 AddrBase);
-
 typedef union _UNWIND_CODE {
     struct {
         uint8_t CodeOffset;
@@ -142,26 +140,12 @@ static void printAddr(std::ostream& stream, void const* addr, bool fullPath = tr
             symbolInfo->SizeOfStruct = sizeof(SYMBOL_INFO);
             symbolInfo->MaxNameLen = MAX_SYM_NAME;
 
+            auto proc = GetCurrentProcess();
+
             if (SymFromAddr(
                     proc, static_cast<DWORD64>(reinterpret_cast<uintptr_t>(addr)), &displacement,
                     symbolInfo
                 )) {
-                if (auto entry = SymFunctionTableAccess64(proc, static_cast<DWORD64>(reinterpret_cast<uintptr_t>(addr)))) {
-                    auto moduleBase = SymGetModuleBase64(proc, static_cast<DWORD64>(reinterpret_cast<uintptr_t>(addr)));
-                    auto runtimeFunction = static_cast<PRUNTIME_FUNCTION>(entry);
-                    auto unwindInfo = reinterpret_cast<PUNWIND_INFO>(moduleBase + runtimeFunction->UnwindInfoAddress);
-
-                    // This is a chain of unwind info structures, so we traverse back to the first one
-                    while (unwindInfo->Flags & UNW_FLAG_CHAININFO) {
-                        runtimeFunction = (PRUNTIME_FUNCTION)&(unwindInfo->UnwindCode[( unwindInfo->CountOfCodes + 1 ) & ~1]);
-                        unwindInfo = reinterpret_cast<PUNWIND_INFO>(moduleBase + runtimeFunction->UnwindInfoAddress);
-                    }
-
-                    if (moduleBase + runtimeFunction->BeginAddress != symbolInfo->Address) {
-                        // the symbol address is not the same as the function address
-                        return;
-                    }
-                }
                 stream << " (" << std::string(symbolInfo->Name, symbolInfo->NameLen) << " + "
                        << displacement;
 
@@ -183,10 +167,6 @@ static void printAddr(std::ostream& stream, void const* addr, bool fullPath = tr
     }
     else {
         stream << addr;
-
-        if (GeodeFunctionTableAccess64(proc, reinterpret_cast<DWORD64>(addr))) {
-            stream << " (Hook handler)";
-        }
     }
 }
 
@@ -216,22 +196,8 @@ static std::string getStacktrace(PCONTEXT context, Mod*& suspectedFaultyMod) {
     // size_t frame = 0;
     while (true) {
         if (!StackWalk64(
-                IMAGE_FILE_MACHINE_AMD64, process, thread, &stack, context, nullptr,
-                +[](HANDLE hProcess, DWORD64 AddrBase) {
-                    auto ret = GeodeFunctionTableAccess64(hProcess, AddrBase);
-                    if (ret) {
-                        return ret;
-                    }
-                    return SymFunctionTableAccess64(hProcess, AddrBase);
-                }, 
-                +[](HANDLE hProcess, DWORD64 dwAddr) -> DWORD64 {
-                    auto ret = GeodeFunctionTableAccess64(hProcess, dwAddr);
-                    if (ret) {
-                        return dwAddr & (~0xffffull);
-                    }
-                    return SymGetModuleBase64(hProcess, dwAddr);
-                }
-                , nullptr
+                IMAGE_FILE_MACHINE_I386, process, thread, &stack, context, nullptr,
+                SymFunctionTableAccess64, SymGetModuleBase64, nullptr
             ))
             break;
 

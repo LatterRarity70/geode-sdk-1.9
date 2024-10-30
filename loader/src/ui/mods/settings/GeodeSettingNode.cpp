@@ -105,7 +105,7 @@ void BoolSettingNode::valueChanged(bool updateText) {
 }
 
 void BoolSettingNode::onToggle(CCObject*) {
-    m_uncommittedValue = !m_toggle->getIsActive();
+    m_uncommittedValue = !m_toggle->m_toggled;
     this->valueChanged(true);
     m_toggle->toggle(!m_uncommittedValue);
 }

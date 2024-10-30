@@ -80,7 +80,14 @@ Result<ByteVector> utils::file::readBinary(std::filesystem::path const& path) {
 
 Result<std::string> utils::file::readStringFromResources(std::string const& path) {
     if (!cocos2d::CCFileUtils::sharedFileUtils()->isFileExist(path)) {
+#ifdef GEODE_IS_WINDOWS
+        // resource paths may not be setup during init, which is also where we use this the most
+        // so, just easier to pull it from the resources manually
+        auto resourcePath = dirs::getGameDir() / "Resources" / path;
+        return readString(resourcePath);
+#else
         return Err("File does not exist");
+#endif
     }
 
     auto size = 0ul;

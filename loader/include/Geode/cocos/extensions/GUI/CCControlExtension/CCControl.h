@@ -94,7 +94,7 @@ class CC_DLL CCControl : public CCLayerRGBA
     /** The current control state constant. 
      * @note Robtop Addition: Made non virtual
     */
-    CC_SYNTHESIZE_READONLY_NV(CCControlState, m_eState, State);
+    CC_SYNTHESIZE_READONLY(CCControlState, m_eState, State);
 
     /** True if all of the controls parents are visible */
 protected:

@@ -265,10 +265,25 @@ void Loader::Impl::addProblem(LoadProblem const& problem) {
 void Loader::Impl::queueInternalMods(std::vector<ModMetadata>& modQueue) {
     geode::log::info("Finding internal mods");
 
-    auto internalModListing = cocos2d::CCArray::createWithContentsOfFile("mods.plist");
-    for (auto& mod : CCArrayExt<CCString*>(internalModListing)) {
+    auto modsRes = utils::file::readJsonFromResources("mods.json");
+    if (!modsRes) {
+        geode::log::warn("Failed to find internal loads: {}", modsRes.unwrapErr());
+        return;
+    }
+
+    auto mods = modsRes.unwrap();
+    if (!mods.is_array()) {
+        geode::log::warn("Failed to find internal mods: mods.json not an array");
+    }
+
+    for (auto& mod : mods.as_array()) {
+        if (!mod.is_string()) {
+            geode::log::error("Failed to load internal mod: id is not string");
+            continue;
+        }
+
         // determine filename
-        std::string mod_id = mod->getCString();
+        std::string mod_id = mod.as_string();
         auto mod_pathname = mod_id + "/mod.json";
 
         auto json = utils::file::readJsonFromResources(mod_pathname);

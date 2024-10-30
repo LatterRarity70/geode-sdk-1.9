@@ -199,8 +199,7 @@ protected:
         m_bigArrowRightBtnSpr->setColor(enableRight ? ccWHITE : ccGRAY);
 
         if (m_slider) {
-            m_slider->m_touchLogic->m_thumb->setValue(this->valueToSlider(this->getValue()));
-            m_slider->updateBar();
+            m_slider->setValue(this->valueToSlider(this->getValue()));
             // m_slider->m_sliderBar->setColor(enable ? ccWHITE : ccGRAY);
             m_slider->m_touchLogic->m_thumb->setColor(enable ? ccWHITE : ccGRAY);
             m_slider->m_touchLogic->m_thumb->setEnabled(enable);

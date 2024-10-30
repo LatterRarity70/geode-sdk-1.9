@@ -54,7 +54,7 @@ class CC_DLL CCControlColourPicker : public CCControl
     
 public:
     // @note RobTop Addition
-    ccColor3B const& getColorValue() const;
+    virtual ccColor3B const& getColorValue() const;
     // @note RobTop Addition
     virtual void setColorValue(ccColor3B const&);
 
@@ -63,18 +63,21 @@ public:
     virtual ~CCControlColourPicker();
 
 protected:
+/*
     // @note RobTop Addition
     ccColor3B m_rgb;
     HSV m_hsv;
     CC_SYNTHESIZE_RETAIN(CCControlSaturationBrightnessPicker*, m_colourPicker, colourPicker)
     
     CC_SYNTHESIZE_RETAIN(CCControlHuePicker*, m_huePicker, HuePicker)
-    CC_SYNTHESIZE_RETAIN(CCSprite*, m_background, Background)
+*/
+
+    CC_SYNTHESIZE_READONLY(CCSprite*, m_background, Background)
 
     // @note RobTop Addition
-    CC_SYNTHESIZE_NV(CCSprite*, m_colorTarget, ColorTarget)
+    CC_SYNTHESIZE(CCSprite*, m_colorTarget, ColorTarget)
     // @note RobTop Addition
-    CC_SYNTHESIZE_NV(ColorPickerDelegate*, m_delegate, Delegate)
+    CC_SYNTHESIZE(ColorPickerDelegate*, m_delegate, Delegate)
     
     
 public:

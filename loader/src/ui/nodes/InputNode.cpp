@@ -47,7 +47,7 @@ bool InputNode::init(
     m_input->setLabelPlaceholderColor({ 150, 150, 150 });
     m_input->setLabelPlaceholderScale(.75f);
     m_input->setMaxLabelScale(.85f);
-    m_input->setCharLimit(maxCharCount);
+    m_input->m_maxLabelLength = maxCharCount;
     m_input->setPosition(width / 2, height / 2);
     m_input->setUserObject("fix-text-input", CCBool::create(true));
     if (filter.length()) {

@@ -216,7 +216,7 @@ void geode::utils::game::exit() {
 
     // If this breaks down the read, uhhh blame Cvolton or something
     if (AppDelegate::get()) {
-        AppDelegate::get()->trySaveGame(true);
+        AppDelegate::get()->trySaveGame();
     }
     std::exit(0);
 }

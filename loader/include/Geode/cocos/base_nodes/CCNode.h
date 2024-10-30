@@ -889,7 +889,7 @@ public:
 #endif
 
     // method doesn't exist in 1.9, but it's used too much so just reimplement it here
-    GEODE_DLL CCSize getScaledContentSize(){
+    inline CCSize getScaledContentSize(){
         auto cs = getContentSize();
         return {cs.width * m_fScaleX, cs.height * m_fScaleY};
     }
