@@ -74,6 +74,8 @@ public:
 
 class CC_DLL CCControlUtils
 {
+    GEODE_FRIEND_MODIFY;
+
 public:
     static CCSprite* addSpriteToTargetWithPosAndAnchor(const char* spriteName, CCNode * target, CCPoint pos, CCPoint anchor);
     static HSV HSVfromRGB(RGBA value);
