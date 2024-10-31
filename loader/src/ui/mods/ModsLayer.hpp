@@ -67,8 +67,13 @@ protected:
     CCMenuItemSpriteExtra* m_goToPageBtn;
     ModsStatusNode* m_statusNode;
     EventListener<UpdateModListStateFilter> m_updateStateListener;
-    bool m_showSearch = true;
+    bool m_showSearch = false;
     bool m_bigView = false;
+    CCNode* m_searchMenu;
+    TextInput* m_searchInput;
+    CCMenuItemSpriteExtra* m_filtersBtn;
+    CCMenuItemSpriteExtra* m_clearFiltersBtn;
+    std::atomic<size_t> m_searchInputThreads = 0;
 
     bool init();
 
@@ -86,6 +91,9 @@ protected:
     void onTheme(CCObject*);
     void onSettings(CCObject*);
     void onBack(CCObject*);
+
+    void onFilters(CCObject*);
+    void onClearFilters(CCObject*);
 
     void updateState();
 

@@ -16,6 +16,7 @@
 #include <Geode/binding/ButtonSprite.hpp>
 #include <Geode/binding/MenuLayer.hpp>
 #include "popups/ConfirmInstall.hpp"
+#include "popups/FiltersPopup.hpp"
 #include "GeodeStyle.hpp"
 #include "ui/mods/sources/ModListSource.hpp"
 #include <loader/LoaderImpl.hpp>
@@ -457,6 +458,73 @@ bool ModsLayer::init() {
     mainTabs->setLayout(RowLayout::create());
     this->addChild(mainTabs);
 
+    // Search
+
+    m_searchMenu = CCNode::create();
+    m_searchMenu->setID("search-menu");
+    m_searchMenu->ignoreAnchorPointForPosition(false);
+    m_searchMenu->setContentSize({ tabsTop->getContentWidth() - 41.0f, 30 });
+    m_searchMenu->setAnchorPoint({ .5f, .0f });
+    m_searchMenu->setPosition(m_frame->convertToWorldSpace(tabsTop->getPosition() + ccp(0, 8)));
+
+    m_searchInput = TextInput::create(tabsTop->getContentWidth() - 5, "Search Mods");
+    m_searchInput->setID("search-input");
+    m_searchInput->setScale(.75f);
+    m_searchInput->setAnchorPoint({ 0, .5f });
+    m_searchInput->setTextAlign(TextInputAlign::Left);
+    m_searchInput->setCallback([this](auto const&) {
+        // If the source is already in memory, we can immediately update the 
+        // search query
+        if (typeinfo_cast<InstalledModListSource*>(m_currentSource)) {
+            m_currentSource->search(m_searchInput->getString());
+            return;
+        }
+        // Otherwise buffer inputs by a bit
+        // This avoids spamming servers for every character typed, 
+        // instead waiting for input to stop to actually do the search
+        std::thread([this] {
+            m_searchInputThreads += 1;
+            std::this_thread::sleep_for(std::chrono::milliseconds(400));
+            m_searchInputThreads -= 1;
+            if (m_searchInputThreads == 0) {
+                Loader::get()->queueInMainThread([this] {
+                    m_currentSource->search(m_searchInput->getString());
+                });
+            }
+        }).detach();
+    });
+    m_searchMenu->addChildAtPosition(m_searchInput, Anchor::Left, ccp(7.5f, 0));
+
+    auto searchFiltersMenu = CCMenu::create();
+    searchFiltersMenu->setID("search-filters-menu");
+    searchFiltersMenu->setContentWidth(tabsTop->getContentWidth() - m_searchInput->getScaledContentWidth() - 5);
+    searchFiltersMenu->setAnchorPoint({ 1, .5f });
+    searchFiltersMenu->setScale(.5f);
+    // Set higher prio to not let list items override touch
+    searchFiltersMenu->setTouchPriority(-150);
+
+    m_filtersBtn = CCMenuItemSpriteExtra::create(
+        GeodeSquareSprite::createWithSpriteFrameName("GJ_filterIcon_001.png"_spr),
+        this, menu_selector(ModsLayer::onFilters)
+    );
+    m_filtersBtn->setID("filters-button");
+    searchFiltersMenu->addChild(m_filtersBtn);
+
+    m_clearFiltersBtn = CCMenuItemSpriteExtra::create(
+        GeodeSquareSprite::createWithSpriteFrameName("GJ_deleteIcon_001.png"),
+        this, menu_selector(ModsLayer::onClearFilters)
+    );
+    m_clearFiltersBtn->setID("clear-filters-button");
+    searchFiltersMenu->addChild(m_clearFiltersBtn);
+
+    searchFiltersMenu->setLayout(
+        RowLayout::create()
+            ->setAxisAlignment(AxisAlignment::End)
+    );
+    m_searchMenu->addChildAtPosition(searchFiltersMenu, Anchor::Right, ccp(-10, 0));
+
+    this->addChild(m_searchMenu);
+
     // Actions
 
     auto listActionsMenu = CCMenu::create();
@@ -472,7 +540,6 @@ bool ModsLayer::init() {
     );
     bigSizeBtn->setID("list-size-button");
     listActionsMenu->addChild(bigSizeBtn);
-*/
 
     auto searchBtn = CCMenuItemSpriteExtra::create(
         GeodeSquareSprite::createWithSpriteFrameName("search.png"_spr, &m_showSearch),
@@ -480,6 +547,7 @@ bool ModsLayer::init() {
     );
     searchBtn->setID("search-button");
     listActionsMenu->addChild(searchBtn);
+*/
 
     listActionsMenu->setLayout(ColumnLayout::create());
     m_frame->addChildAtPosition(listActionsMenu, Anchor::Left, ccp(-5, 25));
@@ -721,6 +789,15 @@ void ModsLayer::onTheme(CCObject*) {
 }
 void ModsLayer::onSettings(CCObject*) {
     openSettingsPopup(Mod::get(), false);
+}
+
+void ModsLayer::onFilters(CCObject*) {
+    FiltersPopup::create(m_currentSource)->show();
+}
+
+void ModsLayer::onClearFilters(CCObject*) {
+    m_searchInput->setString("", false);
+    m_currentSource->reset();
 }
 
 ModsLayer* ModsLayer::create() {
