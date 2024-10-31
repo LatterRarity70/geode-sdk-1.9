@@ -35,8 +35,10 @@ bool ModList::init(ModListSource* src, CCSize const& size) {
 
     // Check for updates on installed mods, and show an update all button if there are some
     if (typeinfo_cast<InstalledModListSource*>(m_source)) {
+/*
         m_checkUpdatesListener.bind(this, &ModList::onCheckUpdates);
         m_checkUpdatesListener.setFilter(ModsLayer::checkInstalledModsForUpdates());
+*/
 
         m_updateAllContainer = CCNode::create();
         m_updateAllContainer->setID("update-all-container");
