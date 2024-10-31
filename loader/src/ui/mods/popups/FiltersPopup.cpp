@@ -51,6 +51,7 @@ bool FiltersPopup::setup(ModListSource* src) {
             ->setDefaultScaleLimits(.1f, .4f)
     );
     tagsContainer->addChildAtPosition(tagsTitleMenu, Anchor::Top, ccp(0, 4));
+    tagsContainer->setVisible(false);
 
     m_mainLayer->addChildAtPosition(tagsContainer, Anchor::Top, ccp(0, -85));
 
@@ -94,7 +95,7 @@ bool FiltersPopup::setup(ModListSource* src) {
         );
         optionsContainer->addChildAtPosition(optionsTitleMenu, Anchor::Top, ccp(0, 4));
 
-        m_mainLayer->addChildAtPosition(optionsContainer, Anchor::Bottom, ccp(0, 60), ccp(.5f, .5f));
+        m_mainLayer->addChildAtPosition(optionsContainer, Anchor::Center, ccp(0, 0), ccp(.5f, .5f));
     }
     else if (auto src = typeinfo_cast<ServerModListSource*>(m_source)) {
         auto inputContainer = CCNode::create();
@@ -137,10 +138,10 @@ bool FiltersPopup::setup(ModListSource* src) {
         okSpr, this, menu_selector(FiltersPopup::onClose)
     );
     m_buttonMenu->addChildAtPosition(okBtn, Anchor::Bottom, ccp(0, 20));
-
+/*
     m_tagsListener.bind(this, &FiltersPopup::onLoadTags);
     m_tagsListener.setFilter(server::getTags());
-
+*/
     return true;
 }
 
