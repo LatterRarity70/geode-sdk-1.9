@@ -139,10 +139,7 @@ public:
      */
     inline CCPoint getMousePosition() { return { m_fMouseX, m_fMouseY }; }
 
-    /**
-     * @note RobTop addition
-     */
-    void toggleFullScreen(bool fullscreen, bool borderless);
+    void toggleFullScreen(bool fullscreen);
 
     /**
      * @note RobTop addition
