@@ -417,7 +417,7 @@ Function .onVerifyInstDir
 
     ; check mod loaders/mod menus
     IfFileExists $INSTDIR\hackpro.dll other_hackpro
-    IfFileExists $INSTDIR\XInput1_4.dll other_xinput
+    IfFileExists $INSTDIR\xinput9_1_0.dll other_xinput
 
     ; all checks passed
     valid:
@@ -435,7 +435,7 @@ Function .onVerifyInstDir
         StrCpy $0 "hackpro.dll"
         Goto other
     other_xinput:
-        StrCpy $0 "XInput1_4.dll"
+        StrCpy $0 "xinput9_1_0.dll"
         Goto other
     other:
         ${StrRep} $0 $(GEODE_TEXT_MOD_LOADER_ALREADY_INSTALLED) "the dll trademark" $0
@@ -459,7 +459,7 @@ SectionGroup "Geode"
         File ${BINDIR}\Geode.dll
         File ${BINDIR}\Geode.pdb
         File ${BINDIR}\GeodeUpdater.exe
-        File ${BINDIR}\XInput1_4.dll
+        File ${BINDIR}\xinput9_1_0.dll
 
         RMdir /r $INSTDIR\geode\update
         RMdir /r $INSTDIR\geode\index
@@ -525,7 +525,7 @@ Function un.onInit
     IfFileExists $INSTDIR\libcocos2d.dll 0 invalid
 
     ; check if xinput and geode exist
-    IfFileExists $INSTDIR\XInput1_4.dll 0 invalid
+    IfFileExists $INSTDIR\xinput9_1_0.dll 0 invalid
     IfFileExists $INSTDIR\Geode.dll 0 invalid
         Return
 
@@ -540,7 +540,7 @@ Section "Uninstall"
     Delete $INSTDIR\Geode.pdb
     Delete $INSTDIR\Geode.lib
     Delete $INSTDIR\GeodeUpdater.exe
-    Delete $INSTDIR\XInput1_4.dll
+    Delete $INSTDIR\xinput9_1_0.dll
 
     # default value of DATA is an empty string
     # if DATA is empty, keep user data
