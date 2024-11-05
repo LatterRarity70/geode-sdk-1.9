@@ -291,10 +291,9 @@ void geode::utils::game::exit() {
     AppDelegate::get()->trySaveGame();
     // AppDelegate::get()->showLoadingCircle(false, true);
 
-    CCDirector::get()->getActionManager()->addAction(CCSequence::create(
+    CCDirector::get()->getActionManager()->addAction(CCSequence::createWithTwoActions(
         CCDelayTime::create(0.5f),
-        CCCallFunc::create(nullptr, callfunc_selector(MenuLayer::endGame)),
-        nullptr
+        CCCallFunc::create(nullptr, callfunc_selector(MenuLayer::endGame))
     ), CCDirector::get()->getRunningScene(), false);
 }
 
@@ -322,10 +321,9 @@ void geode::utils::game::restart() {
     AppDelegate::get()->trySaveGame();
     // AppDelegate::get()->showLoadingCircle(false, true);
 
-    CCDirector::get()->getActionManager()->addAction(CCSequence::create(
+    CCDirector::get()->getActionManager()->addAction(CCSequence::createWithTwoActions(
         CCDelayTime::create(0.5f),
-        CCCallFunc::create(nullptr, callfunc_selector(Exit::restart)),
-        nullptr
+        CCCallFunc::create(nullptr, callfunc_selector(Exit::restart))
     ), CCDirector::get()->getRunningScene(), false);
 }
 

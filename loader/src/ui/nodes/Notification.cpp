@@ -181,35 +181,38 @@ void Notification::show() {
         SceneManager::get()->keepAcrossScenes(this);
         m_showing = true;
     }
-    this->runAction(CCSequence::create(
-        CCCallFunc::create(this, callfunc_selector(Notification::animateIn)),
-        // wait for fade-in to finish
-        CCDelayTime::create(NOTIFICATION_FADEIN),
-        CCCallFunc::create(this, callfunc_selector(Notification::wait)),
-        nullptr
-    ));
+
+    auto actions = cocos2d::CCArray::create();
+
+    actions->addObject(CCCallFunc::create(this, callfunc_selector(Notification::animateIn)));
+    // wait for fade-in to finish
+    actions->addObject(CCDelayTime::create(NOTIFICATION_FADEIN));
+    actions->addObject(CCCallFunc::create(this, callfunc_selector(Notification::wait)));
+
+    this->runAction(CCSequence::create(actions));
 }
 
 void Notification::wait() {
     this->stopAllActions();
     if (m_time) {
-        this->runAction(CCSequence::create(
+        this->runAction(CCSequence::createWithTwoActions(
             CCDelayTime::create(m_time),
-            CCCallFunc::create(this, callfunc_selector(Notification::hide)),
-            nullptr
+            CCCallFunc::create(this, callfunc_selector(Notification::hide))
         ));
     }
 }
 
 void Notification::hide() {
     this->stopAllActions();
-    this->runAction(CCSequence::create(
-        CCCallFunc::create(this, callfunc_selector(Notification::animateOut)),
-        // wait for fade-out to finish
-        CCDelayTime::create(NOTIFICATION_FADEOUT),
-        CCCallFunc::create(this, callfunc_selector(Notification::showNextNotification)),
-        nullptr
-    ));
+
+    auto actions = cocos2d::CCArray::create();
+
+    actions->addObject(CCCallFunc::create(this, callfunc_selector(Notification::animateOut)));
+    // wait for fade-out to finish
+    actions->addObject(CCDelayTime::create(NOTIFICATION_FADEOUT));
+    actions->addObject(CCCallFunc::create(this, callfunc_selector(Notification::showNextNotification)));
+
+    this->runAction(CCSequence::create(actions));
 }
 
 void Notification::cancel() {
