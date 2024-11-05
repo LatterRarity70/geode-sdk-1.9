@@ -206,6 +206,12 @@ if (WIN32)
 	add_definitions(-D_HAS_ITERATOR_DEBUGGING=0)
 	target_compile_definitions(${PROJECT_NAME} INTERFACE _HAS_ITERATOR_DEBUGGING=0)
 
+	add_definitions(-D_WIN32_WINNT=0x0601)
+	target_compile_definitions(${PROJECT_NAME} INTERFACE -D_WIN32_WINNT=0x0601)
+
+	add_definitions(-DWINVER=0x0601)
+	target_compile_definitions(${PROJECT_NAME} INTERFACE -DWINVER=0x0601)
+
 	target_link_libraries(${PROJECT_NAME} INTERFACE delayimp ws2_32)
 	if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND
 		CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "GNU")
