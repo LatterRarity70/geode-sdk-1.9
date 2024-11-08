@@ -216,6 +216,10 @@ public:
    		return _headers;
    	}
 
+    // @note RobTop Addition
+    inline void setTimeout(int timeout) {
+        _readTimeout = timeout;
+   	}
 
 protected:
     // properties
