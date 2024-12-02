@@ -157,9 +157,9 @@ namespace cocos2d
         static gd::string base64URLEncode(gd::string const&);
         static int ccDeflateMemory(unsigned char*, unsigned int, unsigned char**);
         static int ccDeflateMemoryWithHint(unsigned char*, unsigned int, unsigned char**, unsigned int);
-        static gd::string compressString(gd::string const&, bool, int);
-        static gd::string decompressString(gd::string const&, bool, int);
-        static gd::string decompressString2(unsigned char*, bool, int, int);
+        static gd::string compressString(gd::string, bool);
+        static gd::string decompressString(gd::string, bool);
+        static gd::string decompressString2(unsigned char*, bool, int);
         static gd::string encryptDecrypt(gd::string const&, int);
         static gd::string encryptDecryptWKey(gd::string const&, gd::string);
         static unsigned char hexToChar(const gd::string&);
