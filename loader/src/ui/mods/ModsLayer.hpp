@@ -14,7 +14,7 @@
 #include "sources/ModListSource.hpp"
 #include "UpdateModListState.hpp"
 #include <server/DownloadManager.hpp>
-#include <Geode/loader/SettingV3.hpp>
+#include <Geode/loader/Setting.hpp>
 
 using namespace geode::prelude;
 
@@ -42,7 +42,7 @@ protected:
     EventListener<UpdateModListStateFilter> m_updateStateListener;
     EventListener<server::ModDownloadFilter> m_downloadListener;
     DownloadState m_lastState = DownloadState::None;
-    EventListener<EventFilter<SettingNodeValueChangeEventV3>> m_settingNodeListener;
+    EventListener<EventFilter<SettingNodeValueChangeEvent>> m_settingNodeListener;
     
     bool init();
     void updateState();
@@ -68,7 +68,8 @@ protected:
     ModsStatusNode* m_statusNode;
     EventListener<UpdateModListStateFilter> m_updateStateListener;
     bool m_showSearch = false;
-    bool m_bigView = false;
+    std::vector<CCMenuItemSpriteExtra*> m_displayBtns;
+    ModListDisplay m_modListDisplay;
     CCNode* m_searchMenu;
     TextInput* m_searchInput;
     CCMenuItemSpriteExtra* m_filtersBtn;
@@ -82,9 +83,12 @@ protected:
 /*
     void setIDPopupClosed(SetIDPopup*, int value) override;
 */
+    void onEnterTransitionDidFinish() override;
+    
     void onTab(CCObject* sender);
     void onOpenModsFolder(CCObject*);
-    void onBigView(CCObject*);
+    void onAddModFromFile(CCObject*);
+    void onDisplay(CCObject*);
     void onSearch(CCObject*);
     void onGoToPage(CCObject*);
     void onRefreshList(CCObject*);

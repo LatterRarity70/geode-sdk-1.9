@@ -4,12 +4,13 @@
 #include <Geode/utils/map.hpp>
 #include <optional>
 #include <hash/hash.hpp>
+#include <loader/ModImpl.hpp>
 
 using namespace server;
 
 ModDownloadEvent::ModDownloadEvent(std::string const& id) : id(id) {}
 
-ListenerResult ModDownloadFilter::handle(MiniFunction<Callback> fn, ModDownloadEvent* event) {
+ListenerResult ModDownloadFilter::handle(std::function<Callback> fn, ModDownloadEvent* event) {
     if (m_id.empty() || m_id == event->id) {
         fn(event);
     }
@@ -27,6 +28,7 @@ public:
     DownloadStatus m_status;
     EventListener<ServerRequest<ServerModVersion>> m_infoListener;
     EventListener<web::WebTask> m_downloadListener;
+    unsigned int m_scheduledEventForFrame = 0;
 
     Impl(
         std::string const& id,
@@ -82,7 +84,14 @@ public:
             }
 
             if (!ModDownloadManager::get()->checkAutoConfirm()) {
-                ModDownloadEvent(m_id).post();
+                // Throttle events to only once per frame to not cause a 
+                // billion UI updates at once 
+                if (m_scheduledEventForFrame != CCDirector::get()->getTotalFrames()) {
+                    m_scheduledEventForFrame = CCDirector::get()->getTotalFrames();
+                    Loader::get()->queueInMainThread([id = m_id]() {
+                        ModDownloadEvent(id).post();
+                    });
+                }
             }
         });
         auto fetchVersion = version.has_value() ? ModVersion(*version) : ModVersion(ModVersionLatest());
@@ -124,6 +133,8 @@ public:
                                 .details = fmt::format("Unable to delete existing .geode package (code {})", ec),
                             };
                         }
+                        // Mark mod as updated
+                        ModImpl::getImpl(mod)->m_requestedAction = ModRequestedAction::Update;
                     }
                     // If this was an update, delete the old file first
                     if (!removingInstalledWasError) {
@@ -154,7 +165,14 @@ public:
             else if (event->isCancelled()) {
                 m_status = DownloadStatusCancelled();
             }
-            ModDownloadEvent(m_id).post();
+            // Throttle events to only once per frame to not cause a 
+            // billion UI updates at once 
+            if (m_scheduledEventForFrame != CCDirector::get()->getTotalFrames()) {
+                m_scheduledEventForFrame = CCDirector::get()->getTotalFrames();
+                Loader::get()->queueInMainThread([id = m_id]() {
+                    ModDownloadEvent(id).post();
+                });
+            }
         });
 
         auto req = web::WebRequest();

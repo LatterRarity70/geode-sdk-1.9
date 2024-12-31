@@ -64,10 +64,6 @@ public:
         return meta;
     }
 
-    FieldContainer* getFieldContainer() {
-        return nullptr;
-    }
-
     FieldContainer* getFieldContainer(char const* forClass) {
         if (!m_classFieldContainers.count(forClass)) {
             m_classFieldContainers[forClass] = new FieldContainer();
@@ -106,16 +102,11 @@ size_t modifier::getFieldIndexForClass(char const* name) {
 	return s_nextIndex[name]++;
 }
 
-// not const because might modify contents
-FieldContainer* CCNode::getFieldContainer() {
-    return GeodeNodeMetadata::set(this)->getFieldContainer();
-}
-
 FieldContainer* CCNode::getFieldContainer(char const* forClass) {
     return GeodeNodeMetadata::set(this)->getFieldContainer(forClass);
 }
 
-std::string CCNode::getID() {
+const std::string& CCNode::getID() {
     return GeodeNodeMetadata::set(this)->m_id;
 }
 
@@ -123,7 +114,11 @@ void CCNode::setID(std::string const& id) {
     GeodeNodeMetadata::set(this)->m_id = id;
 }
 
-CCNode* CCNode::getChildByID(std::string const& id) {
+void CCNode::setID(std::string&& id) {
+    GeodeNodeMetadata::set(this)->m_id = std::move(id);
+}
+
+CCNode* CCNode::getChildByID(std::string_view id) {
     for (auto child : CCArrayExt<CCNode*>(this->getChildren())) {
         if (child->getID() == id) {
             return child;
@@ -132,7 +127,7 @@ CCNode* CCNode::getChildByID(std::string const& id) {
     return nullptr;
 }
 
-CCNode* CCNode::getChildByIDRecursive(std::string const& id) {
+CCNode* CCNode::getChildByIDRecursive(std::string_view id) {
     if (auto child = this->getChildByID(id)) {
         return child;
     }
@@ -191,7 +186,7 @@ private:
     std::unique_ptr<NodeQuery> m_next = nullptr;
 
 public:
-    static Result<std::unique_ptr<NodeQuery>> parse(std::string const& query) {
+    static Result<std::unique_ptr<NodeQuery>> parse(std::string_view query) {
         if (query.empty()) {
             return Err("Query may not be empty");
         }
@@ -289,7 +284,7 @@ public:
     }
 };
 
-CCNode* CCNode::querySelector(std::string const& queryStr) {
+CCNode* CCNode::querySelector(std::string_view queryStr) {
     auto res = NodeQuery::parse(queryStr);
     if (!res) {
         log::error("Invalid CCNode::querySelector query '{}': {}", queryStr, res.unwrapErr());
@@ -300,7 +295,7 @@ CCNode* CCNode::querySelector(std::string const& queryStr) {
     return query->match(this);
 }
 
-void CCNode::removeChildByID(std::string const& id) {
+void CCNode::removeChildByID(std::string_view id) {
     if (auto child = this->getChildByID(id)) {
         this->removeChild(child);
     }
@@ -346,7 +341,7 @@ void CCNode::updateLayout(bool updateChildOrder) {
 UserObjectSetEvent::UserObjectSetEvent(CCNode* node, std::string const& id, CCObject* value)
   : node(node), id(id), value(value) {}
 
-ListenerResult AttributeSetFilter::handle(MiniFunction<Callback> fn, UserObjectSetEvent* event) {
+ListenerResult AttributeSetFilter::handle(std::function<Callback> fn, UserObjectSetEvent* event) {
     if (event->id == m_targetID) {
         fn(event);
     }
@@ -456,14 +451,5 @@ void CCNode::updateAnchoredPosition(Anchor anchor, CCPoint const& offset, CCPoin
         opts->setOffset(offset);
     }
 }
-
-#ifdef GEODE_EXPORTING
-
-void CCNode::setAttribute(std::string const& attr, matjson::Value const& value) {}
-std::optional<matjson::Value> CCNode::getAttributeInternal(std::string const& attr) {
-    return std::nullopt;
-}
-
-#endif
 
 #pragma warning(pop)

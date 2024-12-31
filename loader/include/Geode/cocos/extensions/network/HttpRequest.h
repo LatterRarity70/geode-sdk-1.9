@@ -28,6 +28,8 @@
 #include "../../include/cocos2d.h"
 #include "../ExtensionMacros.h"
 
+enum class GJHttpType;
+
 NS_CC_EXT_BEGIN
 
 class CC_DLL CCHttpClient;
@@ -216,10 +218,52 @@ public:
    		return _headers;
    	}
 
-    // @note RobTop Addition
-    inline void setTimeout(int timeout) {
-        _readTimeout = timeout;
-   	}
+    inline int getType() {
+        return _type;
+    }
+
+    inline void setType(int type) {
+        _type = type;
+    }
+
+    // @note Geode addition
+    inline void setType(GJHttpType type) {
+        _type = static_cast<int>(type);
+    }
+
+    inline bool getShouldCancel() {
+        return _shouldCancel;
+    }
+
+    inline void setShouldCancel(bool shouldCancel) {
+        _shouldCancel = shouldCancel;
+    }
+
+    inline int getDownloadProgress() {
+        return _downloadProgress;
+    }
+
+    inline void setDownloadProgress(int downloadProgress) {
+        _downloadProgress = downloadProgress;
+    }
+
+    inline int getReadTimeout() {
+        return _readTimeout;
+    }
+
+    inline void setReadTimeout(int readTimeout) {
+        _readTimeout = readTimeout;
+    }
+
+/*
+    inline int getConnectTimeout() {
+        return _connectTimeout;
+    }
+
+    inline void setConnectTimeout(int connectTimeout) {
+        _connectTimeout = connectTimeout;
+    }
+*/
 
 protected:
     // properties
@@ -233,13 +277,17 @@ protected:
     gd::vector<gd::string>    _headers;		      /// custom http headers
 
     // @note RobTop Addition
-    int _requestTypeGJ;
+    int _type;
     // @note RobTop Addition
     bool _shouldCancel;
     // @note RobTop Addition
     int _downloadProgress;
     // @note RobTop Addition
     int _readTimeout;
+/*
+    // @note RobTop Addition
+    int _connectTimeout;
+*/
 };
 
 NS_CC_EXT_END

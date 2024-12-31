@@ -180,8 +180,10 @@ public:
 	void updateFrameSize();
 
 
-protected:
-	static CCEGLView* s_pEglView;
+public:
+    static CCEGLView* s_pEglView;
+    // @note unknown members here
+    uint8_t m_unkPad[8];
     bool m_bCaptured;
     // Robtop Removal
     // HWND m_hWnd;
@@ -200,6 +202,8 @@ protected:
     int m_nRetinaFactor;
     // @note RobTop Addition
     bool m_bCursorHidden;
+    // @note may be before m_bCursorHidden
+    int m_unkSize4;
     // Robtop Removal
     // LPCWSTR m_menu;
     // Robtop Removal
@@ -219,12 +223,18 @@ public:
     float m_fMouseY;
     // @note RobTop Addition
     bool m_bIsFullscreen;
+/*
     // @note RobTop Addition
     bool m_bIsBorderless;
     // @note RobTop Addition
+    bool m_bIsFix;
+*/
+    // @note RobTop Addition
     bool m_bShouldHideCursor;
+/*
     // @note RobTop Addition
     bool m_bCursorLocked;
+*/
     // @note RobTop Addition
     bool m_bShouldCallGLFinish;
 
