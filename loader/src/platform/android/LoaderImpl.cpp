@@ -29,10 +29,6 @@ std::string Loader::Impl::getGameVersion() {
     return m_gdVersion;
 }
 
-bool Loader::Impl::hasExternalMods() const {
-    return m_hasExternalMods;
-}
-
 bool Loader::Impl::userTriedToLoadDLLs() const {
     return false;
 }

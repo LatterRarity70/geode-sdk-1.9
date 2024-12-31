@@ -1195,3 +1195,7 @@ bool Loader::Impl::isRestartRequired() const {
     }
     return false;
 }
+
+bool Loader::Impl::hasExternalMods() const {
+    return m_hasExternalMods;
+}
