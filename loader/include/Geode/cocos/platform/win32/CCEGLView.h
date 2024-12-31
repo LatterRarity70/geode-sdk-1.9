@@ -182,8 +182,10 @@ public:
 
 public:
     static CCEGLView* s_pEglView;
+/*
     // @note unknown members here
     uint8_t m_unkPad[8];
+*/
     bool m_bCaptured;
     // Robtop Removal
     // HWND m_hWnd;
@@ -203,7 +205,9 @@ public:
     // @note RobTop Addition
     bool m_bCursorHidden;
     // @note may be before m_bCursorHidden
+/*
     int m_unkSize4;
+*/
     // Robtop Removal
     // LPCWSTR m_menu;
     // Robtop Removal
@@ -215,7 +219,7 @@ public:
     GLFWmonitor* m_pPrimaryMonitor;
 public:
     // @note RobTop Addition
-    CC_SYNTHESIZE_NV(CCSize, m_obWindowedSize, WindowedSize);
+    CC_SYNTHESIZE(CCSize, m_obWindowedSize, WindowedSize);
 
     // @note RobTop Addition
     float m_fMouseX;
