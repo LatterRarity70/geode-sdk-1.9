@@ -518,7 +518,17 @@ enum class GJChallengeType {
     Moons = 4,
 };
 
-enum class GJCustomColorMode {};
+enum class GJCustomColorMode {
+    Default = 0,
+    PCol1 = 1,
+    PCol2 = 2,
+    Col1 = 3,
+    Col2 = 4,
+    LightBG = 5,
+    Col3 = 6,
+    Col4 = 7,
+    Col3DL = 8
+};
 
 enum class GJScoreType {
     Unknown = 0,
