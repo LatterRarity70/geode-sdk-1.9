@@ -43,7 +43,7 @@ public:
 
 	const char* keyToString(enumKeyCodes key);
 
-	protected:
+	public:
 		CCArray* m_pDelegates;	// 0x34
 		bool m_bUnknown38;			// 0x38
 		bool m_bUnknown39;      // 0x39

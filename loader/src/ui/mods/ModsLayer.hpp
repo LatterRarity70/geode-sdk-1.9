@@ -83,8 +83,7 @@ protected:
 /*
     void setIDPopupClosed(SetIDPopup*, int value) override;
 */
-    void onEnterTransitionDidFinish() override;
-    
+
     void onTab(CCObject* sender);
     void onOpenModsFolder(CCObject*);
     void onAddModFromFile(CCObject*);

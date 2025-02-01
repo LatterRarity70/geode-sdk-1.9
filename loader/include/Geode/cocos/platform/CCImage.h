@@ -188,7 +188,7 @@ protected:
 
     bool _saveImageToPNG(const char *pszFilePath, bool bIsToRGB = true);
     bool _saveImageToJPG(const char *pszFilePath);
-
+public:
     unsigned char *m_pData;
     bool m_bHasAlpha;
     bool m_bPreMulti;

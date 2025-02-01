@@ -62,13 +62,13 @@ public:
     CCControlColourPicker();
     virtual ~CCControlColourPicker();
 
-protected:
+public:
 /*
     // @note RobTop Addition
     ccColor3B m_rgb;
     HSV m_hsv;
     CC_SYNTHESIZE_RETAIN(CCControlSaturationBrightnessPicker*, m_colourPicker, colourPicker)
-    
+
     CC_SYNTHESIZE_RETAIN(CCControlHuePicker*, m_huePicker, HuePicker)
 */
 

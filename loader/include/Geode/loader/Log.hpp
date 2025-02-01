@@ -130,6 +130,9 @@ namespace geode {
 
         GEODE_DLL std::vector<Log> const& lines();
 
+        /// Returns the path to the current log file
+        GEODE_DLL std::filesystem::path const& getCurrentLogPath();
+
         GEODE_DLL void pushNest(Mod* mod);
         GEODE_DLL void popNest(Mod* mod);
 

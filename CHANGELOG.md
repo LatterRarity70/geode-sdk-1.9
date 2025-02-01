@@ -1,5 +1,39 @@
 # Geode Changelog
 
+## v4.2.1
+ * Fix settings `enable-if` parsing (315bf46, 1542e29)
+
+## v4.2.0
+ * Implement gd::set for android (#1197, #1207)
+ * Log levels for console and file logging (#1208)
+   * Now in the Geode settings you can set the minimum severity for logs
+ * Add GameEvent::Loaded, to avoid hooking Menulayer (c04bcaa)
+   * Check the header for more info
+ * Add setColor shorthands to RGBAProtocol (961c7c8)
+ * New dependency list syntax, also add per dependency settings (1161e18, 889fb0d, c1d3a53)
+   * The dependencies can then read these settings from their dependants
+ * Add auto log deletion after period of time (8f60c3c)
+   * Period length can be changed in settings
+ * Add `log::getCurrentLogPath()` (4c9f990)
+ * Load changelog and mod about page from latest version on the index, instead of local (1d716fc)
+ * Cascade color and opacity for BasedButtonSprite (17107a2)
+ * Add Event v2 classes, wrapper around current event system (728df4e)
+ * Serialize std::filesystem::path as UTF-8 for matjson (#1210)
+ * Improve MDPopup (56a8ced)
+ * Fix macOS file picker, add file ext filters (0b61b50, 241be1b, b8cff6d)
+ * Add UUIDs for old GD versions on macOS (#1213)
+ * Add CCFontSprite and CCSpriteExtra to cocos (#1194)
+ * Reorganize buttons in Geode layer on 4:3 aspect ratio screens (54c93c4)
+ * Patch CCGLProgram::compileShader to prevent closing the game on shader errors (0340f52)
+ * Make all cocos members public (#1214)
+ * Remove modtober animation (f1bf2b6)
+ * Only show "Recommended by X mod" text on recommended dependencies, not suggested (5f64d77)
+ * Fix SceneManager use-after-free (8707a1b)
+ * Icon for pending mod updates is now persistent (0969ec3)
+ * Cleanup stale files from old index version (4d6c173)
+ * Rename Loader to Geode in LoadingLayer text (203c819)
+ * Add `GEODE_BUNDLE_PDB` option in CMake to allow bundling PDB files with mods (#1134)
+
 ## v4.1.2
  * Prevent crashlog recursion on MacOS (a69c4c2)
  * Fix a grave misspelling error (#1203)

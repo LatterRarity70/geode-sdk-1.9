@@ -166,7 +166,7 @@ public:
      */
     virtual void setEnabled(bool enabled);
     
-protected:
+public:
     ccColor3B    m_tColorBackup;
     float        m_fOriginalScale;
 };
@@ -260,7 +260,7 @@ public:
     
 protected:
     void recreateLabel();
-    
+public:
     unsigned int m_uFontSize;
     gd::string m_strFontName;
 };

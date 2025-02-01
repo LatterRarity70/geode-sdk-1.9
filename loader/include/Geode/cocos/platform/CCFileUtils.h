@@ -444,7 +444,8 @@ protected:
      *  @note This method is used internally.
      */
     virtual CCArray* createCCArrayWithContentsOfFile(const gd::string& filename);
-    
+
+public:
     /** Dictionary used to lookup filenames based on a key.
      *  It is used internally by the following methods:
      *
@@ -483,6 +484,7 @@ protected:
 
     gd::string m_strAndroidPath;
 
+protected:
     /**
      *  The singleton pointer of CCFileUtils.
      */
