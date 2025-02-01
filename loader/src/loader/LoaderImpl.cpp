@@ -503,7 +503,7 @@ void Loader::Impl::loadModGraph(Mod* node, bool early) {
     m_refreshedModCount += 1;
     m_lateRefreshedModCount += early ? 0 : 1;
 
-    auto unzipFunction = [this, node]() {
+    auto unzipFunction = [this, node]() -> Result<void, std::string> {
         auto skipUnzip = node->isInternal();
         if (skipUnzip) {
             return Ok();
