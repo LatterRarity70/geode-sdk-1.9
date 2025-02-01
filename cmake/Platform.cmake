@@ -27,7 +27,7 @@ elseif (GEODE_TARGET_PLATFORM STREQUAL "MacOS")
 
 	# for some reason, this value is initialized as an empty string by default. idk why
 	if (NOT DEFINED CMAKE_OSX_ARCHITECTURES OR CMAKE_OSX_ARCHITECTURES STREQUAL "")
-		set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
+		set(CMAKE_OSX_ARCHITECTURES "x86_64")
 	endif()
 
 	# only exists as a global property
