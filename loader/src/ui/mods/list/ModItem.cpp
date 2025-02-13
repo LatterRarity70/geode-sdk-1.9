@@ -52,11 +52,11 @@ bool ModItem::init(ModSource&& source) {
     m_versionLabel = CCLabelBMFont::create("", "bigFont.fnt");
     m_versionLabel->setID("version-label");
     m_versionLabel->setLayoutOptions(AxisLayoutOptions::create()->setScaleLimits(.5f, .7f)->setScalePriority(1));
-    m_titleContainer->addChild(m_versionLabel);
+    m_titleContainer->addChild(m_versionLabel, 1);
 
     m_versionDownloadSeparator = CCLabelBMFont::create("•", "bigFont.fnt");
     m_versionDownloadSeparator->setOpacity(155);
-    m_titleContainer->addChild(m_versionDownloadSeparator);
+    m_titleContainer->addChild(m_versionDownloadSeparator, 2);
     
     m_titleContainer->setLayout(
         RowLayout::create()
