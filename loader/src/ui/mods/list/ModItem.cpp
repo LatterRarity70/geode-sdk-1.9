@@ -422,7 +422,7 @@ void ModItem::updateState() {
                     ->setAutoGrowAxis(true)
             );
             m_badgeContainer->getLayout()->ignoreInvisibleChildren(true);
-            m_titleContainer->addChild(m_badgeContainer);
+            m_titleContainer->addChild(m_badgeContainer, 3);
         }
         // Long tags don't fit in the grid UI
         for (auto child : CCArrayExt<CCNode*>(m_badgeContainer->getChildren())) {
