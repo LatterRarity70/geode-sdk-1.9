@@ -295,7 +295,7 @@ jobs:
     name: Publish
     runs-on: ubuntu-latest
     needs: [ build-windows, build-android ]
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/gdps'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -311,8 +311,10 @@ jobs:
 
       - name: Move Installers
         run: |
-          mv geode-installer-mac/geode-installer-mac.pkg geode-installer-${{ steps.ref.outputs.hash }}-mac.pkg
           mv geode-installer-win/geode-installer-win.exe geode-installer-${{ steps.ref.outputs.hash }}-win.exe
+
+      #   mv geode-installer-mac/geode-installer-mac.pkg geode-installer-${{ steps.ref.outputs.hash }}-mac.pkg
+
 
       # - name: Zip MacOS Artifacts
       #  uses: vimtor/action-zip@v1.2
@@ -323,7 +325,7 @@ jobs:
       - name: Zip Windows Artifacts
         uses: vimtor/action-zip@v1.2
         with:
-          files: geode-win/XInput1_4.dll geode-win/Geode.dll geode-win/GeodeUpdater.exe geode-win/Geode.lib geode-win/Geode.pdb
+          files: geode-win/XInput9_1_0.dll geode-win/Geode.dll geode-win/GeodeUpdater.exe geode-win/Geode.lib geode-win/Geode.pdb
           dest: geode-${{ steps.ref.outputs.hash }}-win.zip
 
       - name: Zip Android32 Artifacts
@@ -338,17 +340,17 @@ jobs:
           files: geode-android32/resources
           dest: resources.zip
 
-#      - name: Update Development Release
-#        uses: andelf/nightly-release@main
-#        env:
-#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-#        with:
-#          tag_name: nightly
-#          name: 'Development Release'
-#          body: |
-#            Geode development release for commit ${{ github.sha }}. Since this is not a regular release, Geode will not install the resources automatically, so you should use the installer if you want them.
-#          files: |
-#            ./geode-installer-${{ steps.ref.outputs.hash }}-win.exe
-#            ./geode-${{ steps.ref.outputs.hash }}-win.zip
-#            ./geode-${{ steps.ref.outputs.hash }}-android32.zip
-#            ./resources.zip
+      - name: Update Development Release
+        uses: andelf/nightly-release@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: nightly
+          name: 'Development Release'
+          body: |
+            Geode development release for commit ${{ github.sha }}. Since this is not a regular release, Geode will not install the resources automatically, so you should use the installer if you want them.
+          files: |
+            ./geode-installer-${{ steps.ref.outputs.hash }}-win.exe
+            ./geode-${{ steps.ref.outputs.hash }}-win.zip
+            ./geode-${{ steps.ref.outputs.hash }}-android32.zip
+            ./resources.zip
