@@ -338,10 +338,6 @@ bool LazySprite::initWithSpriteFrameName(const char* fn) {
     return this->postInit(CCSprite::initWithSpriteFrameName(fn));
 }
 
-bool LazySprite::initWithFile(const char* fn) {
-    return this->postInit(CCSprite::initWithFile(fn));
-}
-
 bool LazySprite::initWithFile(const char* fn, const CCRect& rect) {
     return this->postInit(CCSprite::initWithFile(fn, rect));
 }

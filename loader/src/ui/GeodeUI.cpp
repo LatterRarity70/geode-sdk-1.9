@@ -234,7 +234,7 @@ protected:
                         m_sprite->initWithSpriteFrameName("geode-logo.png"_spr);
                     } else {
                         auto filename = fmt::format("{}/logo.png", mod->getID());
-                        m_sprite->initWithFile(filename.c_str());
+                        m_sprite->CCSprite::initWithFile(filename.c_str());
                     }
                 }
             },

@@ -53,7 +53,6 @@ namespace geode {
         virtual bool initWithTexture(cocos2d::CCTexture2D* pTexture, const cocos2d::CCRect& rect) override;
         virtual bool initWithSpriteFrame(cocos2d::CCSpriteFrame* pSpriteFrame) override;
         virtual bool initWithSpriteFrameName(const char* pszSpriteFrameName) override;
-        virtual bool initWithFile(const char* pszFilename) override;
         virtual bool initWithFile(const char* pszFilename, const cocos2d::CCRect& rect) override;
 
     private:
