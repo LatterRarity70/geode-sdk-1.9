@@ -73,8 +73,11 @@ Result<> Mod::Impl::setup() {
         auto const binaryPlatformId = PlatformID::toShortString(GEODE_PLATFORM_TARGET GEODE_MACOS(, true));
 
         auto const binariesDir = searchPathRoot / m_metadata.getID() / "binaries" / binaryPlatformId;
-        if (std::filesystem::exists(binariesDir))
+
+        std::error_code code;
+        if (std::filesystem::exists(binariesDir, code) && !code) {
             LoaderImpl::get()->addNativeBinariesPath(binariesDir);
+        }
 
         m_resourcesLoaded = true;
     }
@@ -108,7 +111,7 @@ std::optional<std::string> Mod::Impl::getDetails() const {
     return m_metadata.getDetails();
 }
 
-ModMetadata Mod::Impl::getMetadata() const {
+ModMetadata const& Mod::Impl::getMetadata() const {
     return m_metadata;
 }
 
@@ -643,14 +646,7 @@ Result<> Mod::Impl::unzipGeodeFile(ModMetadata metadata) {
         auto message = ec.message();
         #ifdef GEODE_IS_WINDOWS
             // Force the error message into English
-            char* errorBuf = nullptr;
-            FormatMessageA(
-                FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_IGNORE_INSERTS,
-                nullptr, ec.value(), MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), (LPSTR)&errorBuf, 0, nullptr);
-            if (errorBuf) {
-                message = errorBuf;
-                LocalFree(errorBuf);
-            }
+            message = formatSystemError(ec.value());
         #endif
         return Err("Unable to delete temp dir: " + message);
     }
@@ -729,6 +725,14 @@ bool Mod::Impl::isLoggingEnabled() const {
 
 void Mod::Impl::setLoggingEnabled(bool enabled) {
     m_loggingEnabled = enabled;
+}
+
+Severity Mod::Impl::getLogLevel() const {
+    return m_logLevel;
+}
+
+void Mod::Impl::setLogLevel(Severity level) {
+    m_logLevel = level;
 }
 
 bool Mod::Impl::shouldLoad() const {

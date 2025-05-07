@@ -119,8 +119,8 @@ protected:
         if (!setting->isInputEnabled()) {
             m_input->getBGSprite()->setVisible(false);
             m_input->setEnabled(false);
-            m_input->getInputNode()->m_placeholderLabel->setOpacity(255);
-            m_input->getInputNode()->m_placeholderLabel->setColor(ccWHITE);
+            m_input->getInputNode()->m_textLabel->setOpacity(255);
+            m_input->getInputNode()->m_textLabel->setColor(ccWHITE);
         }
         this->getButtonMenu()->addChildAtPosition(m_input, Anchor::Center);
 
@@ -220,7 +220,11 @@ protected:
         this->setValue(value, static_cast<CCNode*>(sender));
     }
     void onSlider(CCObject*) {
-        this->setValue(this->valueFromSlider(m_slider->m_touchLogic->m_thumb->getValue()), m_slider);
+        auto value = this->valueFromSlider(m_slider->m_touchLogic->m_thumb->getValue());
+
+        if (value != this->getValue()) {
+            this->setValue(value, m_slider);
+        }
     }
 
 public:

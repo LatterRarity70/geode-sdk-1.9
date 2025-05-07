@@ -76,6 +76,10 @@ ModMetadata Mod::getMetadata() const {
     return m_impl->getMetadata();
 }
 
+ModMetadata const& Mod::getMetadataRef() const {
+    return m_impl->getMetadata();
+}
+
 std::filesystem::path Mod::getTempDir() const {
     return m_impl->getTempDir();
 }
@@ -253,6 +257,14 @@ bool Mod::isLoggingEnabled() const {
 
 void Mod::setLoggingEnabled(bool enabled) {
     m_impl->setLoggingEnabled(enabled);
+}
+
+Severity Mod::getLogLevel() const {
+    return m_impl->getLogLevel();
+}
+
+void Mod::setLogLevel(Severity level) {
+    m_impl->setLogLevel(level);
 }
 
 bool Mod::hasSavedValue(std::string_view key) {

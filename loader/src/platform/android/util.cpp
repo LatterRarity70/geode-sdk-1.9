@@ -16,6 +16,7 @@ using namespace geode::prelude;
 #include <Geode/DefaultInclude.hpp>
 #include <optional>
 #include <mutex>
+#include <string.h>
 
 #include <jni.h>
 #include <Geode/cocos/platform/android/jni/JniHelper.h>
@@ -119,8 +120,23 @@ std::filesystem::path dirs::getModRuntimeDir() {
     return std::filesystem::path(cachedResult) / "geode" / "unzipped";
 }
 
+std::filesystem::path dirs::getResourcesDir() {
+    return "assets";
+}
+
 void utils::web::openLinkInBrowser(std::string const& url) {
-    CCApplication::sharedApplication()->openURL(url.c_str());
+    JniMethodInfo t;
+    if (JniHelper::getStaticMethodInfo(t, "com/geode/launcher/utils/GeodeUtils", "openWebview", "(Ljava/lang/String;)V")) {
+        jstring urlArg = t.env->NewStringUTF(url.c_str());
+
+        t.env->CallStaticVoidMethod(t.classID, t.methodID, urlArg);
+
+        t.env->DeleteLocalRef(urlArg);
+        t.env->DeleteLocalRef(t.classID);
+    } else {
+        clearJNIException();
+        CCApplication::sharedApplication()->openURL(url.c_str());
+    }
 }
 
 bool utils::file::openFolder(std::filesystem::path const& path) {
@@ -280,14 +296,16 @@ void geode::utils::game::launchLoaderUninstaller(bool deleteSaveData) {
     log::error("Launching Geode uninstaller is not supported on android");
 }
 
-void geode::utils::game::exit() {
+void geode::utils::game::exit(bool save) {
     // TODO: yeah
     // if (CCApplication::sharedApplication() &&
     //     (GameManager::get()->m_playLayer || GameManager::get()->m_levelEditorLayer)) {
     //     log::error("Cannot exit in PlayLayer or LevelEditorLayer!");
     //     return;
     // }
-    AppDelegate::get()->trySaveGame();
+    if (save) {
+        AppDelegate::get()->trySaveGame();
+    }
     // AppDelegate::get()->showLoadingCircle(false, true);
 
     CCDirector::get()->getActionManager()->addAction(CCSequence::createWithTwoActions(
@@ -296,7 +314,11 @@ void geode::utils::game::exit() {
     ), CCDirector::get()->getRunningScene(), false);
 }
 
-void geode::utils::game::restart() {
+void geode::utils::game::exit() {
+    exit(true);
+}
+
+void geode::utils::game::restart(bool save) {
     // if (CCApplication::sharedApplication() &&
     //     (GameManager::get()->m_playLayer || GameManager::get()->m_levelEditorLayer)) {
     //     log::error("Cannot restart in PlayLayer or LevelEditorLayer!");
@@ -317,13 +339,19 @@ void geode::utils::game::restart() {
     // Not implemented
     // log::error("Restarting the game is not implemented on android");
 
-    AppDelegate::get()->trySaveGame();
+    if (save) {
+        AppDelegate::get()->trySaveGame();
+    }
     // AppDelegate::get()->showLoadingCircle(false, true);
 
     CCDirector::get()->getActionManager()->addAction(CCSequence::createWithTwoActions(
         CCDelayTime::create(0.5f),
         CCCallFunc::create(nullptr, callfunc_selector(Exit::restart))
     ), CCDirector::get()->getRunningScene(), false);
+}
+
+void geode::utils::game::restart() {
+    restart(true);
 }
 
 static const char* permissionToName(Permission permission) {
@@ -395,4 +423,46 @@ void geode::utils::thread::platformSetName(std::string const& name) {
 std::string geode::utils::getEnvironmentVariable(const char* name) {
     auto result = std::getenv(name);
     return result ? result : "";
+}
+
+std::string geode::utils::formatSystemError(int code) {
+    return strerror(code);
+}
+
+cocos2d::CCRect geode::utils::getSafeAreaRect() {
+    static auto insets = []{
+        std::array<int, 4> insets{};
+        JniMethodInfo info;
+
+        if (JniHelper::getStaticMethodInfo(info, "com/geode/launcher/utils/GeodeUtils", "getScreenInsets", "()[I")) {
+            auto arr = reinterpret_cast<jintArray>(info.env->CallStaticObjectMethod(info.classID, info.methodID));
+
+            if (arr) {
+                auto elems = info.env->GetIntArrayElements(arr, nullptr);
+                std::copy_n(elems, 4, insets.begin());
+
+                info.env->ReleaseIntArrayElements(arr, elems, 0);
+            }
+
+            info.env->DeleteLocalRef(info.classID);
+        } else {
+            clearJNIException();
+        }
+
+        return insets;
+    }();
+    auto winSize = cocos2d::CCDirector::sharedDirector()->getWinSize();
+
+    auto scaleX = cocos2d::CCEGLView::sharedOpenGLView()->getScaleX();
+    auto scaleY = cocos2d::CCEGLView::sharedOpenGLView()->getScaleY();
+
+    auto insetLeft = insets[0] / scaleX;
+    auto insetBottom = insets[1] / scaleY;
+    auto insetRight = insets[2] / scaleX;
+    auto insetTop = insets[3] / scaleY;
+
+    auto insetX = std::max(insetLeft, insetRight);
+    auto insetY = std::max(insetTop, insetBottom);
+
+    return cocos2d::CCRect(insetX, insetY, winSize.width - 2 * insetX, winSize.height - 2 * insetY);
 }

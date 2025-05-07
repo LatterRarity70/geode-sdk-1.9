@@ -100,7 +100,7 @@ struct CustomMenuLayer : Modify<CustomMenuLayer, MenuLayer> {
                 m_fields->m_geodeButton->addChild(m_fields->m_exclamation);
             }
         }
-        
+
         // show if the user tried to be naughty and load arbitrary DLLs
         static bool shownTriedToLoadDlls = false;
         if (!shownTriedToLoadDlls) {
@@ -212,7 +212,7 @@ struct CustomMenuLayer : Modify<CustomMenuLayer, MenuLayer> {
         }
 
         for (auto mod : Loader::get()->getAllMods()) {
-            if (mod->getMetadata().usesDeprecatedIDForm()) {
+            if (mod->getMetadataRef().usesDeprecatedIDForm()) {
                 log::error(
                     "Mod ID '{}' will be rejected in the future - "
                     "IDs must match the regex `[a-z0-9\\-_]+\\.[a-z0-9\\-_]+`",
@@ -267,7 +267,7 @@ struct CustomMenuLayer : Modify<CustomMenuLayer, MenuLayer> {
         float horizontalGap = 3.5f;
         float verticalGap = 5.0f;
         auto facebookButton = static_cast<CCMenuItemSpriteExtra*>(socialMenu->getChildByID("facebook-button"));
-        facebookButton->setPosition({ 
+        facebookButton->setPosition({
             facebookButton->getScaledContentSize().width / 2,
             robtopButton->getScaledContentSize().height + verticalGap + facebookButton->getScaledContentSize().height / 2
         });
@@ -301,7 +301,7 @@ struct CustomMenuLayer : Modify<CustomMenuLayer, MenuLayer> {
     }
 
     void onMissingTextures(CCObject*) {
-        
+
     #ifdef GEODE_IS_DESKTOP
 
         (void) utils::file::createDirectoryAll(dirs::getGeodeDir() / "update" / "resources" / "geode.loader");
@@ -336,7 +336,7 @@ struct CustomMenuLayer : Modify<CustomMenuLayer, MenuLayer> {
 
     #else
 
-        // dunno if we can auto-create target directory on mobile, nor if the 
+        // dunno if we can auto-create target directory on mobile, nor if the
         // user has access to moving stuff there
 
         FLAlertLayer::create(

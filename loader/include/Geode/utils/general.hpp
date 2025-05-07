@@ -13,6 +13,7 @@
 #include <clocale>
 #include <type_traits>
 #include <fmt/format.h>
+#include <cocos2d.h>
 
 namespace geode {
     using ByteVector = std::vector<uint8_t>;
@@ -49,10 +50,10 @@ namespace geode {
             return h >= str.size() ? 5381 : (hash(str, h + 1) * 33) ^ str[h];
         }
 
-        constexpr size_t operator"" _h(char const* txt, size_t) {
+        constexpr size_t operator""_h(char const* txt, size_t) {
             return geode::utils::hash(txt);
         }
-        constexpr size_t operator"" _h(wchar_t const* txt, size_t) {
+        constexpr size_t operator""_h(wchar_t const* txt, size_t) {
             return geode::utils::hash(txt);
         }
 
@@ -159,6 +160,18 @@ namespace geode {
         GEODE_DLL float getDisplayFactor();
         
         GEODE_DLL std::string getEnvironmentVariable(const char* name);
+
+        /**
+         * Formats an error code (from `GetLastError()` or `errno`) to a user readable string,
+         * using `FormatMessageA` on Windows and `strerror` on other platforms.
+         */
+        GEODE_DLL std::string formatSystemError(int code);
+
+        /**
+         * Returns the safe area rectangle, or the area that is not covered by device elements (such as a display cutout or home bar)
+         * This is relative to the winSize.
+         */
+        GEODE_DLL cocos2d::CCRect getSafeAreaRect();
     }
 
     template <class... Args>
@@ -181,8 +194,10 @@ namespace geode::utils::clipboard {
 }
 
 namespace geode::utils::game {
-    GEODE_DLL void exit();
-    GEODE_DLL void restart();
+    GEODE_DLL void exit(); // TODO: left for abi compat
+    GEODE_DLL void exit(bool saveData /* = true */);
+    GEODE_DLL void restart(); // TODO: left for abi compat
+    GEODE_DLL void restart(bool saveData /* = true */);
     GEODE_DLL void launchLoaderUninstaller(bool deleteSaveData);
 }
 

@@ -3,6 +3,7 @@
 #include <Geode/utils/ranges.hpp>
 #include <Geode/loader/Dirs.hpp>
 #include <ui/mods/GeodeStyle.hpp>
+#include <Geode/ui/MDPopup.hpp>
 
 class SettingNodeSizeChangeEventV3::Impl final {
 public:
@@ -142,12 +143,10 @@ void SettingNodeV3::updateState(CCNode* invoker) {
 
 void SettingNodeV3::onDescription(CCObject*) {
     auto title = m_impl->setting->getDisplayName();
-    FLAlertLayer::create(
-        nullptr,
-        title.c_str(),
-        m_impl->setting->getDescription().value_or("No description provided").c_str(),
-        "OK", nullptr,
-        clamp(title.size() * 16, 300, 400)
+    MDPopup::create(true,
+        title,
+        m_impl->setting->getDescription().value_or("No description provided"),
+        "OK"
     )->show();
 }
 void SettingNodeV3::onReset(CCObject*) {
@@ -360,8 +359,8 @@ bool StringSettingNodeV3::init(std::shared_ptr<StringSettingV3> setting, float w
     if (setting->getEnumOptions()) {
         m_input->getBGSprite()->setVisible(false);
         m_input->setEnabled(false);
-        m_input->getInputNode()->m_placeholderLabel->setOpacity(255);
-        m_input->getInputNode()->m_placeholderLabel->setColor(ccWHITE);
+        m_input->getInputNode()->m_textLabel->setOpacity(255);
+        m_input->getInputNode()->m_textLabel->setColor(ccWHITE);
         
         m_arrowLeftSpr = CCSprite::createWithSpriteFrameName("navArrowBtn_001.png");
         m_arrowLeftSpr->setFlipX(true);

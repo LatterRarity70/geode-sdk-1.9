@@ -552,6 +552,7 @@ public:
     bool m_bFlipX;                              /// Whether the sprite is flipped horizaontally or not.
     bool m_bFlipY;                              /// Whether the sprite is flipped vertically or not.
 
+    // @note RobTop Addition
     CC_SYNTHESIZE(bool, m_bDontDraw, DontDraw);
 };
 

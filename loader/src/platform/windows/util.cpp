@@ -201,7 +201,11 @@ std::filesystem::path dirs::getModRuntimeDir() {
     return dirs::getGeodeDir() / "unzipped";
 }
 
-void geode::utils::game::exit() {
+std::filesystem::path dirs::getResourcesDir() {
+    return dirs::getGameDir() / "Resources";
+}
+
+void geode::utils::game::exit(bool saveData) {
     // TODO: mat
     #if 0
     if (CCApplication::sharedApplication() &&
@@ -212,13 +216,20 @@ void geode::utils::game::exit() {
     #endif
 
     // If this breaks down the read, uhhh blame Cvolton or something
-    if (AppDelegate::get()) {
-        AppDelegate::get()->trySaveGame();
+    if (saveData) {
+        if (AppDelegate::get()) {
+            AppDelegate::get()->trySaveGame();
+        }
     }
+
     std::exit(0);
 }
 
-void geode::utils::game::restart() {
+void geode::utils::game::exit() {
+    exit(true);
+}
+
+void geode::utils::game::restart(bool saveData) {
     // TODO: mat
     // TODO: be VERY careful before enabling this again, this function is called in platform/windows/main.cpp,
     // before we even check if we are in forward compatibility mode or not.
@@ -240,7 +251,11 @@ void geode::utils::game::restart() {
     const auto updaterPath = (workingDir / "GeodeUpdater.exe").string();
     ShellExecuteA(nullptr, "open", updaterPath.c_str(), gdName.c_str(), workingDir.string().c_str(), false);
 
-    exit();
+    exit(saveData);
+}
+
+void geode::utils::game::restart() {
+    restart(true);
 }
 
 void geode::utils::game::launchLoaderUninstaller(bool deleteSaveData) {
@@ -328,4 +343,30 @@ std::string geode::utils::getEnvironmentVariable(const char* name) {
     }
     
     return "";
+}
+
+std::string geode::utils::formatSystemError(int code) {
+    char errorBuf[512]; // enough for most messages
+
+    auto result = FormatMessageA(
+        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr, code, MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), errorBuf, sizeof(errorBuf), nullptr);
+
+    if (result == 0) {
+        return fmt::format("Unknown ({})", code);
+    } else {
+        std::string msg = std::string(errorBuf, errorBuf + result);
+
+        // the string sometimes includes a crlf, strip it, also remove unprintable chars
+        msg.erase(std::find_if(msg.rbegin(), msg.rend(), [](unsigned char ch) {
+            return ch != '\r' && ch != '\n' && ch < 127;
+        }).base(), msg.end());
+
+        return msg;
+    }
+}
+
+cocos2d::CCRect geode::utils::getSafeAreaRect() {
+    auto winSize = cocos2d::CCDirector::sharedDirector()->getWinSize();
+    return cocos2d::CCRect(0.0f, 0.0f, winSize.width, winSize.height);
 }
