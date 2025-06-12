@@ -11,6 +11,37 @@ using namespace geode::prelude;
 
 namespace {
 
+#ifdef GEODE_IS_WINDOWS
+bool applyCondvarPatch() {
+    if (getEnvironmentVariable("GEODE_FORCE_CONDVAR_PATCH") != "0") {
+        return true;
+    }
+
+    auto wgv = GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version");
+    if (!wgv) return false;
+
+    auto str = reinterpret_cast<const char* (*)()>(wgv)();
+    if (!str || !*str) return false;
+
+    std::string_view wineVersion{str};
+
+    auto periodpos = wineVersion.find('.');
+    if (periodpos == std::string_view::npos) {
+        return false;
+    }
+
+    auto major = utils::numFromString<int>(wineVersion.substr(0, periodpos)).unwrapOr(0);
+    auto minor = utils::numFromString<int>(wineVersion.substr(periodpos + 1)).unwrapOr(0);
+
+    if (major > 10 || (major == 10 && minor > 0)) {
+        // wine 10.1 fixed this bug
+        return false;
+    }
+
+    return true;
+}
+#endif
+
 // mini threadpool type thing
 class Manager {
 public:
@@ -21,7 +52,15 @@ public:
         return instance;
     }
 
-    Manager() {}
+    Manager() {
+#ifdef GEODE_IS_WINDOWS
+        if (applyCondvarPatch()) {
+            // on wine 10.0 and older, std::condition_variable may be broken
+            m_spinlock = true;
+            m_spinCounter = 0;
+        }
+#endif
+    }
 
     ~Manager() {
         this->stopThreads();
@@ -47,12 +86,14 @@ public:
 
         std::unique_lock lock(m_mutex);
         m_tasks.emplace(std::move(task));
-        m_condvar.notify_one();
+
+        m_spinlock ? (void)++m_spinCounter : m_condvar.notify_one();
     }
 
 private:
     static constexpr size_t MAX_THREADS = 2;
     size_t m_threadsInit = 0;
+    bool m_spinlock = false;
 
     std::mutex m_mutex; // guards the queue
     std::queue<Task> m_tasks;
@@ -60,6 +101,7 @@ private:
     std::array<std::atomic_bool, MAX_THREADS> m_threadsBusy;
     std::condition_variable m_condvar;
     std::atomic_bool m_requestedStop;
+    std::atomic_size_t m_spinCounter = 0;
 
     std::function<void()> threadPickTask(std::unique_lock<std::mutex>& lock) {
         auto task = std::move(m_tasks.front());
@@ -67,12 +109,44 @@ private:
         return task;
     }
 
+    bool shouldQuitSpin() {
+        size_t ctr = m_spinCounter.load(std::memory_order::seq_cst);
+
+        while (true) {
+            if (ctr == 0) {
+                return false; // counter at 0, nothing available in the queue
+            }
+
+            if (m_spinCounter.compare_exchange_weak(ctr, ctr - 1, std::memory_order::seq_cst)) {
+                return true; // we successfully decremented the counter, and it was > 0
+            }
+
+            // if we failed to increment, retry
+        }
+    }
+
     bool threadWait(std::unique_lock<std::mutex>& lock) {
         if (!m_tasks.empty()) return true;
 
-        m_condvar.wait_for(lock, std::chrono::milliseconds{50}, [&] {
-            return !m_tasks.empty();
-        });
+        if (!m_spinlock) {
+            m_condvar.wait_for(lock, std::chrono::milliseconds{50}, [&] {
+                return !m_tasks.empty();
+            });
+        } else {
+            // release lock
+            lock.unlock();
+
+            while (!m_requestedStop) {
+                if (!this->shouldQuitSpin()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds{5});
+                    continue;
+                }
+
+                // if shouldQuitSpin returned true, there are tasks available, re-lock the lock
+                lock.lock();
+                break;
+            }
+        }
 
         return !m_tasks.empty();
     }
@@ -149,11 +223,11 @@ void LazySprite::loadFromUrl(char const* url, Format format, bool ignoreCache) {
     if (!ignoreCache && this->initFromCache(url)) {
         return;
     }
-    
+
     m_expectedFormat = format;
     m_isLoading = true;
 
-    m_listener.bind([this, cacheKey = std::string(url)](web::WebTask::Event* event) mutable {
+    m_listener.bind([this, cacheKey = ignoreCache ? std::string{} : std::string(url)](web::WebTask::Event* event) mutable {
         if (!event || !event->getValue()) return;
 
         auto resp = event->getValue();
@@ -213,13 +287,15 @@ void LazySprite::loadFromFile(const std::filesystem::path& path, Format format, 
             res = std::move(res)
         ]() mutable {
             auto self = selfref.lock();
-            if (!self) return;
-    
-            if (!res) { 
+
+            // if sprite was destructed or loading has been cancelled, do nothing
+            if (!self || !self->m_isLoading) return;
+
+            if (!res) {
                 self->onError(fmt::format("failed to load from file {}: {}", path, res.unwrapErr()));
                 return;
             }
-    
+
             self->doInitFromBytes(std::move(res).unwrap(), std::move(cacheKey));
         });
     });
@@ -241,7 +317,7 @@ void LazySprite::loadFromData(std::vector<uint8_t> data, Format format) {
     m_expectedFormat = format;
     m_isLoading = true;
 
-    this->doInitFromBytes(data, "");
+    this->doInitFromBytes(std::move(data), "");
 }
 
 void LazySprite::doInitFromBytes(std::vector<uint8_t> data, std::string cacheKey) {
@@ -260,7 +336,7 @@ void LazySprite::doInitFromBytes(std::vector<uint8_t> data, std::string cacheKey
 
             Loader::get()->queueInMainThread([selfref = std::move(selfref)]() mutable {
                 auto self = selfref.lock();
-                if (self) {
+                if (self && self->m_isLoading) {
                     self->onError("invalid image data or format");
                 }
             });
@@ -269,7 +345,7 @@ void LazySprite::doInitFromBytes(std::vector<uint8_t> data, std::string cacheKey
         }
 
         // image initialization succeeded, all we need to do now is to
-        // create the opengl texture (must be on main thread!) and then set this sprite to use that.
+        // create the OpenGL texture (must be on main thread!) and then set this sprite to use that.
 
         Loader::get()->queueInMainThread([
             selfref = std::move(selfref),
@@ -277,7 +353,7 @@ void LazySprite::doInitFromBytes(std::vector<uint8_t> data, std::string cacheKey
             cacheKey = std::move(cacheKey)
         ] {
             auto self = selfref.lock();
-            if (!self) return;
+            if (!self || !self->m_isLoading) return;
 
             auto texture = new CCTexture2D();
             if (!texture->initWithImage(image)) {
@@ -287,29 +363,26 @@ void LazySprite::doInitFromBytes(std::vector<uint8_t> data, std::string cacheKey
                 return;
             }
 
-            // store texture
-            CCTextureCache::get()->m_pTextures->setObject(texture, cacheKey.c_str());
+            image->release(); // deallocate the image, not needed anymore
 
-            image->release();   // deallocate the image, not needed anymore
-            texture->release(); // bring texture's refcount back to 1
-            
+            // store texture
+            if (!cacheKey.empty()) {
+                CCTextureCache::get()->m_pTextures->setObject(texture, cacheKey.c_str());
+            }
+
             // this is weird but don't touch it unless you should
             if (!self->CCSprite::initWithTexture(texture)) {
                 // this should never happen tbh
                 self->onError("failed to initialize the sprite");
             }
+
+            texture->release(); // bring texture's refcount back to 1
         });
     });
 }
 
 std::string LazySprite::makeCacheKey(std::filesystem::path const& path) {
-#ifdef GEODE_IS_WINDOWS
-    std::string p = geode::utils::string::wideToUtf8(path.wstring());
-#else
-    std::string p = path.string();
-#endif
-
-    return p;
+    return utils::string::pathToString(path);
 }
 
 CCTexture2D* LazySprite::lookupCache(char const* key) {
@@ -326,8 +399,8 @@ bool LazySprite::initFromCache(char const* key) {
 
 /* It's not impossible to optimize those too, but I did not bother for now, so they are just forwarders */
 
-bool LazySprite::initWithTexture(CCTexture2D* texture, const CCRect& rect) {
-    return this->postInit(CCSprite::initWithTexture(texture, rect));
+bool LazySprite::initWithTexture(CCTexture2D* texture, const CCRect& rect, bool rotated) {
+    return this->postInit(CCSprite::initWithTexture(texture, rect, rotated));
 }
 
 bool LazySprite::initWithSpriteFrame(CCSpriteFrame* sf) {
@@ -336,10 +409,6 @@ bool LazySprite::initWithSpriteFrame(CCSpriteFrame* sf) {
 
 bool LazySprite::initWithSpriteFrameName(const char* fn) {
     return this->postInit(CCSprite::initWithSpriteFrameName(fn));
-}
-
-bool LazySprite::initWithFile(const char* fn) {
-    return this->postInit(CCSprite::initWithFile(fn));
 }
 
 bool LazySprite::initWithFile(const char* fn, const CCRect& rect) {
@@ -398,6 +467,15 @@ bool LazySprite::isLoaded() {
 
 bool LazySprite::isLoading() {
     return m_isLoading;
+}
+
+void LazySprite::cancelLoad() {
+    m_isLoading = false;
+
+    if (m_loadingCircle) {
+        m_loadingCircle->removeFromParent();
+        m_loadingCircle = nullptr;
+    }
 }
 
 LazySprite* LazySprite::create(CCSize size, bool loadingCircle) {

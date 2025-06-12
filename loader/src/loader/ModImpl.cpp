@@ -218,11 +218,11 @@ Result<> Mod::Impl::saveData() {
     // saveData is expected to be synchronous, and always called from GD thread
     ModStateEvent(m_self, ModEventType::DataSaved).post();
 
-    auto res = utils::file::writeString(m_saveDirPath / "settings.json", json.dump());
+    auto res = utils::file::writeStringSafe(m_saveDirPath / "settings.json", json.dump());
     if (!res) {
         log::error("Unable to save settings: {}", res.unwrapErr());
     }
-    auto res2 = utils::file::writeString(m_saveDirPath / "saved.json", m_saved.dump());
+    auto res2 = utils::file::writeStringSafe(m_saveDirPath / "saved.json", m_saved.dump());
     if (!res2) {
         log::error("Unable to save values: {}", res2.unwrapErr());
     }
@@ -319,7 +319,8 @@ Result<> Mod::Impl::loadBinary() {
     }
 
     if (!std::filesystem::exists(this->getBinaryPath())) {
-        geode::log::info("Couldn't find binary at {}", this->getBinaryPath());
+        std::error_code ec;
+        std::filesystem::remove(m_tempDirName / "modified-at", ec);
         return Err(
             fmt::format(
                 "Failed to load {}: No binary could be found for current platform.\n"
@@ -412,7 +413,7 @@ Result<> Mod::Impl::uninstall(bool deleteSaveData) {
 
     if (this->isInternal()) {
         utils::game::launchLoaderUninstaller(deleteSaveData);
-        utils::game::exit();
+        utils::game::exit(true);
         return Ok();
     }
 
@@ -652,11 +653,6 @@ Result<> Mod::Impl::unzipGeodeFile(ModMetadata metadata) {
     }
 
     (void)utils::file::createDirectoryAll(tempDir);
-    auto res = file::writeString(datePath, modifiedHash);
-    if (!res) {
-        log::warn("Failed to write modified date of geode zip: {}", res.unwrapErr());
-    }
-
 
     GEODE_UNWRAP_INTO(auto unzip, file::Unzip::create(metadata.getPath()));
     if (!unzip.hasEntry(metadata.getBinaryName())) {
@@ -665,6 +661,11 @@ Result<> Mod::Impl::unzipGeodeFile(ModMetadata metadata) {
         );
     }
     GEODE_UNWRAP(unzip.extractAllTo(tempDir));
+    
+    auto res = file::writeString(datePath, modifiedHash);
+    if (!res) {
+        log::warn("Failed to write modified date of geode zip: {}", res.unwrapErr());
+    }
 
     return Ok();
 }

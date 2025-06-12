@@ -63,6 +63,15 @@ Result<std::u32string> utils::string::utf8ToUtf32(std::string_view str) {
     return Ok(std::move(result));
 }
 
+std::string utils::string::pathToString(std::filesystem::path const& path) {
+#ifdef GEODE_IS_WINDOWS
+    return utils::string::wideToUtf8(path.wstring());
+#else
+    return path.string();
+#endif
+}
+
+
 bool utils::string::startsWith(std::string const& str, std::string const& prefix) {
     return str.rfind(prefix, 0) == 0;
 }
@@ -98,7 +107,7 @@ std::string utils::string::toUpper(std::string const& str) {
 
 std::string& utils::string::replaceIP(std::string& str, std::string const& orig, std::string const& repl) {
     if (orig.empty()) return str;
-    
+
     std::string::size_type n = 0;
     while ((n = str.find(orig, n)) != std::string::npos) {
         str.replace(n, orig.size(), repl);

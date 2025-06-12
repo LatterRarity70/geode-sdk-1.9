@@ -116,12 +116,7 @@ elseif (GEODE_TARGET_PLATFORM STREQUAL "Win32")
 		)
 	else()
 		target_link_libraries(${PROJECT_NAME} INTERFACE
-			${GEODE_LOADER_PATH}/include/link/win32/ssl.lib
-			${GEODE_LOADER_PATH}/include/link/win32/crypto.lib
 			${GEODE_LOADER_PATH}/include/link/win32/nghttp2.lib
-			${GEODE_LOADER_PATH}/include/link/win32/ngtcp2.lib
-			${GEODE_LOADER_PATH}/include/link/win32/nghttp3.lib
-			${GEODE_LOADER_PATH}/include/link/win32/ngtcp2_crypto_boringssl.lib
 			${GEODE_LOADER_PATH}/include/link/win32/libcurl.lib
 		)
 	endif()

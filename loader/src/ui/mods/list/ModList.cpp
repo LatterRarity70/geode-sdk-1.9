@@ -30,14 +30,14 @@ $execute {
 bool ModList::init(ModListSource* src, CCSize const& size) {
     if (!CCNode::init())
         return false;
-    
+
     this->setContentSize(size);
     this->setAnchorPoint({ .5f, .5f });
     this->setID("ModList");
 
     m_source = src;
     m_source->reset();
-    
+
     m_list = ScrollLayer::create(size);
     this->addChildAtPosition(m_list, Anchor::Bottom, ccp(-m_list->getScaledContentWidth() / 2, 0));
 
@@ -79,11 +79,11 @@ bool ModList::init(ModListSource* src, CCSize const& size) {
         );
 
         m_updateAllContainer->addChildAtPosition(updateAllBG, Anchor::Center);
-        
+
         m_updateCountLabel = TextArea::create("", "bigFont.fnt", .35f, size.width / 2 - 30, ccp(0, 1), 12.f);
         m_updateCountLabel->setID("update-count-label");
         m_updateAllContainer->addChildAtPosition(m_updateCountLabel, Anchor::Left, ccp(10, 0), ccp(0, 0));
-        
+
         m_updateAllMenu = CCMenu::create();
         m_updateAllMenu->setID("update-all-menu");
         m_updateAllMenu->setContentSize({size.width / 2, 20});
@@ -148,14 +148,14 @@ bool ModList::init(ModListSource* src, CCSize const& size) {
             errorsBG->ignoreAnchorPointForPosition(false);
 
             m_errorsContainer->addChildAtPosition(errorsBG, Anchor::Center);
-            
+
             auto errorsLabel = TextArea::create(
                 "There were <cy>errors</c> loading some mods",
                 "bigFont.fnt", .35f, size.width / 2 - 30, ccp(0, 1), 12.f
             );
             errorsLabel->setID("errors-label");
             m_errorsContainer->addChildAtPosition(errorsLabel, Anchor::Left, ccp(10, 0), ccp(0, 0));
-            
+
             auto errorsMenu = CCMenu::create();
             errorsMenu->setID("errors-menu");
             errorsMenu->setContentSize({size.width / 2, 20});
@@ -378,7 +378,7 @@ bool ModList::init(ModListSource* src, CCSize const& size) {
     m_invalidateCacheListener.setFilter(InvalidateCacheFilter(m_source));
 
     m_downloadListener.bind([this](auto) { this->updateTopContainer(); });
-    
+
     this->gotoPage(0);
     this->updateTopContainer();
 
@@ -461,7 +461,7 @@ void ModList::onPage(CCObject* sender) {
     if (nSender->getTag() < 0 && m_page >= -nSender->getTag()) {
         m_page += nSender->getTag();
     }
-    // Ig this can technically overflow, but why would there be over 4 billion pages 
+    // Ig this can technically overflow, but why would there be over 4 billion pages
     // (and why would someone manually scroll that far)
     else if (nSender->getTag() > 0 && m_page + nSender->getTag() < m_source->getPageCount()) {
         m_page += nSender->getTag();
@@ -525,14 +525,14 @@ void ModList::updateTopContainer() {
     // Store old relative scroll position (ensuring no divide by zero happens)
     auto oldPositionArea = m_list->m_contentLayer->getContentHeight() - m_list->getContentHeight();
     auto oldPosition = oldPositionArea > 0.f ?
-        m_list->m_contentLayer->getPositionY() / oldPositionArea : 
+        m_list->m_contentLayer->getPositionY() / oldPositionArea :
         -1.f;
 
-    // Update list size to account for the top menu 
+    // Update list size to account for the top menu
     // (giving a little bit of extra padding for it, the same size as gap)
     m_list->setContentHeight(
         m_topContainer->getContentHeight() > 0.f ?
-            this->getContentHeight() - m_topContainer->getContentHeight() - 2.5f : 
+            this->getContentHeight() - m_topContainer->getContentHeight() - 2.5f :
             this->getContentHeight()
     );
     this->updateDisplay(m_display);
@@ -580,12 +580,12 @@ void ModList::updateDisplay(ModListDisplay display) {
     // Store old relative scroll position (ensuring no divide by zero happens)
     auto oldPositionArea = m_list->m_contentLayer->getContentHeight() - m_list->getContentHeight();
     auto oldPosition = oldPositionArea > 0.f ?
-        m_list->m_contentLayer->getPositionY() / oldPositionArea : 
+        m_list->m_contentLayer->getPositionY() / oldPositionArea :
         -1.f;
 
     // fix initial width being 0
     m_list->m_contentLayer->setContentWidth(m_list->getContentWidth());
-    
+
     // Update the list layout based on the display model
     if (display == ModListDisplay::Grid) {
         m_list->m_contentLayer->setLayout(
@@ -622,7 +622,7 @@ void ModList::updateDisplay(ModListDisplay display) {
 }
 
 void ModList::updateState() {
-    // Update the "Show Updates" and "Show Errors" buttons on 
+    // Update the "Show Updates" and "Show Errors" buttons on
     // the updates available / errors banners
     if (auto src = typeinfo_cast<InstalledModListSource*>(m_source)) {
         if (m_toggleUpdatesOnlyBtn) {
@@ -670,14 +670,14 @@ void ModList::gotoPage(size_t page, bool update) {
 
     // Update page size (if needed)
     m_source->setPageSize(getDisplayPageSize(m_source, m_display));
-    
+
     if (!m_source->isLocalModsOnly()) {
         // Start loading new page with generic loading message
         this->showStatus(ModListUnkProgressStatus(), "Loading...");
     }
     m_listener.setFilter(m_source->loadPage(page, update));
 
-    // Do initial eager update on page UI (to prevent user spamming arrows 
+    // Do initial eager update on page UI (to prevent user spamming arrows
     // to access invalid pages)
     this->updateState();
 }
@@ -698,7 +698,7 @@ void ModList::showStatus(ModListStatus status, std::string const& message, std::
         std::holds_alternative<ModListUnkProgressStatus>(status)
         || std::holds_alternative<ModListProgressStatus>(status)
     );
-    
+
     // the loading bar makes no sense to display - it's meant for progress of mod list page loading
     // however the mod list pages are so small, that there usually isn't a scenario where the loading
     // takes longer than a single frame - therefore this is useless
@@ -730,16 +730,16 @@ void ModList::onClearFilters(CCObject*) {
 void ModList::onToggleUpdates(CCObject*) {
     if (auto src = typeinfo_cast<InstalledModListSource*>(m_source)) {
         auto mut = src->getQueryMut();
-        mut->type = mut->type == InstalledModListType::OnlyUpdates ? 
-            InstalledModListType::All : 
+        mut->type = mut->type == InstalledModListType::OnlyUpdates ?
+            InstalledModListType::All :
             InstalledModListType::OnlyUpdates;
     }
 }
 void ModList::onToggleErrors(CCObject*) {
     if (auto src = typeinfo_cast<InstalledModListSource*>(m_source)) {
         auto mut = src->getQueryMut();
-        mut->type = mut->type == InstalledModListType::OnlyErrors ? 
-            InstalledModListType::All : 
+        mut->type = mut->type == InstalledModListType::OnlyErrors ?
+            InstalledModListType::All :
             InstalledModListType::OnlyErrors;
     }
 }

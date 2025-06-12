@@ -21,7 +21,7 @@ protected:
     bool initWithDuration(float duration) {
         if (!CCActionInterval::initWithDuration(duration))
             return false;
-        
+
         return true;
     }
 
@@ -74,7 +74,7 @@ bool EventWinnerAnimation::init() {
     m_bg->runAction(CCFadeTo::create(1.f, 205));
     this->addChildAtPosition(m_bg, Anchor::Center);
 
-    // Hopefully this loads before it is shows in the UI otherwise there will 
+    // Hopefully this loads before it is shows in the UI otherwise there will
     // be an awkward loading circle lol
     auto logo = createServerModLogo("rainixgd.geome3dash");
     logo->setVisible(false);

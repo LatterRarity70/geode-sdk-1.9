@@ -29,7 +29,7 @@ protected:
         SomeFetching,
         SomeDownloading,
     };
-    
+
     CCScale9Sprite* m_statusBG;
     CCLabelBMFont* m_status;
     CCLabelBMFont* m_statusPercentage;
@@ -43,7 +43,7 @@ protected:
     EventListener<server::ModDownloadFilter> m_downloadListener;
     DownloadState m_lastState = DownloadState::None;
     EventListener<EventFilter<SettingNodeValueChangeEvent>> m_settingNodeListener;
-    
+
     bool init();
     void updateState();
 

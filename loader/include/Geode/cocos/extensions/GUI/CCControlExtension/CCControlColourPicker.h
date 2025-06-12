@@ -7,17 +7,17 @@
  *
  * Modified by Yannick Loriot.
  * http://yannickloriot.com
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -51,7 +51,7 @@ NS_CC_EXT_BEGIN
 class CC_DLL CCControlColourPicker : public CCControl
 {
     GEODE_FRIEND_MODIFY
-    
+
 public:
     // @note RobTop Addition
     virtual ccColor3B const& getColorValue() const;
@@ -76,8 +76,8 @@ public:
     CC_SYNTHESIZE(CCSprite*, m_colorTarget, ColorTarget)
     // @note RobTop Addition
     CC_SYNTHESIZE(ColorPickerDelegate*, m_delegate, Delegate)
-    
-    
+
+
 public:
     // @note RobTop Addition: renamed create to colourPicker
     static CCControlColourPicker* colourPicker();
@@ -86,11 +86,11 @@ public:
     void hueSliderValueChanged(CCObject * sender, CCControlEvent controlEvent);
     void colourSliderValueChanged(CCObject * sender, CCControlEvent controlEvent);
 
-protected:    
+protected:
     void updateControlPicker();
     void updateHueAndControlPicker();
     virtual bool ccTouchBegan(CCTouch* touch, CCEvent* pEvent);
-    
+
 };
 
 // end of GUI group
