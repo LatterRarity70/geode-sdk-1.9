@@ -845,6 +845,10 @@ void server::queueBatches(
 }
 
 ServerRequest<std::vector<ServerModUpdate>> server::checkAllUpdates(bool useCache) {
+    return ServerRequest<std::vector<ServerModUpdate>>::immediate(
+        Ok<std::vector<ServerModUpdate>>({})
+    );
+/*
     if (useCache) {
         return getCache<checkAllUpdates>().get();
     }
@@ -888,6 +892,7 @@ ServerRequest<std::vector<ServerModUpdate>> server::checkAllUpdates(bool useCach
         },
         "Mod Update Check"
     );
+*/
 }
 
 void server::clearServerCaches(bool clearGlobalCaches) {

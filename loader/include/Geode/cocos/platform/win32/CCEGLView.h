@@ -44,9 +44,9 @@ class CC_DLL CCEGLView : public CCEGLViewProtocol, public CCObject
     GEODE_FRIEND_MODIFY
 protected:
     virtual ~CCEGLView();
-public:
     CCEGLView();
 
+public:
     CCEGLView(geode::ZeroConstructorType, size_t fill) :
         CCEGLViewProtocol(geode::ZeroConstructor, fill),
         CCObject(geode::ZeroConstructor, fill - sizeof(CCEGLViewProtocol)) {}
