@@ -5,6 +5,7 @@
 #include <fmt/format.h>
 #include <optional>
 #include <hash/hash.hpp>
+#include <loader/LoaderImpl.hpp>
 #include <loader/ModImpl.hpp>
 
 using namespace server;
@@ -148,9 +149,23 @@ public:
                             };
                         }
                         else {
+                            #ifdef GEODE_IS_IOS
+                            auto okUnzip = LoaderImpl::get()->unzipGeodeFile(m_id);
+                            if (!okUnzip) {
+                                m_status = DownloadStatusError {
+                                    .details = okUnzip.unwrapErr(),
+                                };
+                            }
+                            else {
+                                m_status = DownloadStatusDone {
+                                    .version = version
+                                };
+                            }
+                            #else
                             m_status = DownloadStatusDone {
                                 .version = version
                             };
+                            #endif
                         }
                     }
                 }
