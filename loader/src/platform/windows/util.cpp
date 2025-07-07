@@ -111,6 +111,7 @@ bool utils::file::openFolder(std::filesystem::path const& path) {
 
 
 Task<Result<std::span<const std::uint8_t>>> file::pickReadBytes(FilePickOptions const& options) {
+    using RetTask = Task<Result<std::span<const std::uint8_t>>>;
     return RetTask::immediate(Err<std::string>("pickReadBytes is unimplemented on this platform"));
 }
 
