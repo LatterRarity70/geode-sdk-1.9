@@ -109,6 +109,11 @@ bool utils::file::openFolder(std::filesystem::path const& path) {
     return success;
 }
 
+
+Task<Result<std::span<const std::uint8_t>>> file::pickReadBytes(FilePickOptions const& options) {
+    return RetTask::immediate(Err<std::string>("pickReadBytes is unimplemented on this platform"));
+}
+
 Task<Result<std::filesystem::path>> file::pick(PickMode mode, FilePickOptions const& options) {
     using RetTask = Task<Result<std::filesystem::path>>;
     #define TURN_INTO_NFDMODE(mode) \

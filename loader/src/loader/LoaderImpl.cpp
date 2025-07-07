@@ -1135,6 +1135,144 @@ void Loader::Impl::forceSafeMode() {
     m_forceSafeMode = true;
 }
 
+void Loader::Impl::installModManuallyFromBytes(std::span<const std::uint8_t> bytes, std::function<void()> after) {
+    ByteVector byteVec{bytes.begin(), bytes.end()};
+    auto res = file::Unzip::create(byteVec).andThen([](auto unzip) {
+        return ModMetadata::createFromGeodeZip(unzip);
+    });
+    if (!res) {
+        FLAlertLayer::create(
+            "Invalid File",
+            fmt::format(
+                "The file is not a valid Geode mod: {}",
+                res.unwrapErr()
+            ).c_str(),
+            "OK"
+        )->show();
+        return;
+    }
+
+    auto meta = res.unwrap();
+
+    auto check = meta.checkTargetVersions();
+    if (!check) {
+        FLAlertLayer::create(
+            "Invalid Mod Version",
+            fmt::format(
+                "The mod <cy>{}</c> can not be installed: {}",
+                meta.getID(),
+                check.unwrapErr()
+            ).c_str(),
+            "OK"
+        )->show();
+
+        return;
+    }
+
+    auto doInstallModFromFile = [this, byteVec, meta, after]() {
+        std::error_code ec;
+
+        static size_t MAX_ATTEMPTS = 10;
+
+        // Figure out a free path to install to
+        auto installTo = dirs::getModsDir() / fmt::format("{}.geode", meta.getID());
+        size_t counter = 0;
+        while (std::filesystem::exists(installTo, ec) && counter < MAX_ATTEMPTS) {
+            installTo = dirs::getModsDir() / fmt::format("{}-{}.geode", meta.getID(), counter);
+            counter += 1;
+        }
+
+        // This is incredibly unlikely but theoretically possible
+        if (counter >= MAX_ATTEMPTS) {
+            FLAlertLayer::create(
+                "Unable to Install",
+                fmt::format(
+                    "Unable to install mod <co>{}</c>: Can't find a free filename!",
+                    meta.getID()
+                ).c_str(),
+                "OK"
+            )->show();
+            return;
+        }
+
+        // Actually copy the file over to the install directory
+        auto writeRes = file::writeBinary(installTo, byteVec);
+        if (!writeRes) {
+            FLAlertLayer::create(
+                "Unable to Install",
+                fmt::format(
+                    "Unable to install mod <co>{}</c>: {}",
+                    meta.getID(), writeRes.unwrapErr()
+                ).c_str(),
+                "OK"
+            )->show();
+            return;
+        }
+
+        // Mark an updated mod as updated or add to the mods list
+        if (m_mods.contains(meta.getID())) {
+            m_mods.at(meta.getID())->m_impl->m_requestedAction = ModRequestedAction::Update;
+        }
+        // Otherwise add a new Mod
+        // This should be safe as all of the scary stuff in setup() is only relevant
+        // for mods that are actually running
+        else {
+            auto mod = new Mod(meta);
+            auto res = mod->m_impl->setup();
+            if (!res) {
+                log::error("Unable to set up manually installed mod: {}", res.unwrapErr());
+            }
+            (void)mod->enable();
+            m_mods.insert({ meta.getID(), mod });
+        }
+
+        if (after) after();
+
+        auto installMessage = fmt::format(
+            "Mod <co>{}</c> has been successfully installed from file!",
+            meta.getName()
+        );
+        FLAlertLayer::create(
+            "Mod Installed",
+            installMessage.c_str(),
+            "OK"
+        )->show();
+    };
+
+    if (auto existing = Loader::get()->getInstalledMod(meta.getID())) {
+        createQuickPopup(
+            "Already Installed",
+            fmt::format(
+                "The mod <cy>{}</c> <cj>{}</c> has already been installed "
+                "as version <cl>{}</c>. Do you want to <co>replace the "
+                "installed version with the file</c>?",
+                meta.getID(), meta.getVersion(),
+                existing->getVersion()
+            ),
+            "Cancel", "Replace",
+            [doInstallModFromFile, byteVec, existing, meta](auto, bool btn2) mutable {
+                std::error_code ec;
+                std::filesystem::remove(existing->getPackagePath(), ec);
+                if (ec) {
+                    FLAlertLayer::create(
+                        "Unable to Uninstall",
+                        fmt::format(
+                            "Unable to uninstall <cy>{}</c>: {} (Error code <cr>{}</c>)",
+                            existing->getID(), ec.message(), ec.value()
+                        ).c_str(),
+                        "OK"
+                    )->show();
+                    return;
+                }
+                doInstallModFromFile();
+            }
+        );
+        return;
+    }
+
+    doInstallModFromFile();
+}
+
 void Loader::Impl::installModManuallyFromFile(std::filesystem::path const& path, std::function<void()> after) {
     auto res = ModMetadata::createFromGeodeFile(path);
     if (!res) {
@@ -1162,6 +1300,8 @@ void Loader::Impl::installModManuallyFromFile(std::filesystem::path const& path,
             ).c_str(),
             "OK"
         )->show();
+
+        return;
     }
 
     auto doInstallModFromFile = [this, path, meta, after]() {

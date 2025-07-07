@@ -17,6 +17,8 @@
 #include <mutex>
 #include <string.h>
 
+#include <sys/mman.h>
+
 #include <jni.h>
 #include <Geode/cocos/platform/android/jni/JniHelper.h>
 
@@ -156,6 +158,7 @@ bool utils::file::openFolder(std::filesystem::path const& path) {
 
 std::mutex s_callbackMutex;
 static std::function<void(Result<std::filesystem::path>)> s_fileCallback {};
+static std::function<void(Result<std::span<const std::uint8_t>>)> s_fileBytesCallback {};
 static std::function<void(Result<std::vector<std::filesystem::path>>)> s_filesCallback {};
 static std::function<bool()> s_taskCancelled {};
 
@@ -178,6 +181,43 @@ JNIEXPORT void JNICALL Java_com_geode_launcher_utils_GeodeUtils_selectFileCallba
         s_fileCallback = {};
         s_taskCancelled = {};
     }
+}
+
+extern "C"
+JNIEXPORT void JNICALL Java_com_geode_launcher_utils_GeodeUtils_selectFileDescriptorCallback(
+        JNIEnv *env,
+        jobject,
+        jint fd,
+        jlong fileSize
+) {
+    auto buf = mmap(nullptr, fileSize, PROT_READ, MAP_PRIVATE, fd, 0);
+
+    if (buf == MAP_FAILED) {
+        s_fileBytesCallback(Err("Failed to mmap fd"));
+        s_fileBytesCallback = {};
+        s_taskCancelled = {};
+        return;
+    }
+
+    std::span byteVec{
+        reinterpret_cast<const std::uint8_t*>(buf),
+        static_cast<std::size_t>(fileSize)
+    };
+
+    const std::lock_guard lock(s_callbackMutex);
+    if (s_taskCancelled && s_taskCancelled()) {
+        s_taskCancelled = {};
+        return;
+    }
+    if (s_fileBytesCallback) {
+        s_fileBytesCallback(Ok(byteVec));
+        s_fileBytesCallback = {};
+        s_taskCancelled = {};
+    }
+
+    Loader::get()->queueInMainThread([=] {
+        munmap(buf, fileSize);
+    });
 }
 
 extern "C"
@@ -220,16 +260,48 @@ JNIEXPORT void JNICALL Java_com_geode_launcher_utils_GeodeUtils_failedCallback(
         s_filesCallback(Err("Permission error"));
         s_filesCallback = {};
     }
+    if (s_fileBytesCallback) {
+        s_fileBytesCallback(Err("Permission error"));
+        s_fileBytesCallback = {};
+    }
     if (s_taskCancelled) {
         s_taskCancelled = {};
     }
 }
 
+Task<Result<std::span<const std::uint8_t>>> file::pickReadBytes(file::FilePickOptions const& options) {
+    using RetTask = Task<Result<std::span<const std::uint8_t>>>;
+
+    const std::lock_guard lock(s_callbackMutex);
+    if (s_fileCallback || s_filesCallback || s_fileBytesCallback || s_taskCancelled) {
+        return RetTask::immediate(Err("File picker was already called this frame"));
+    }
+
+    JniMethodInfo t;
+    if (JniHelper::getStaticMethodInfo(t, "com/geode/launcher/utils/GeodeUtils", "selectFileBytes", "(Ljava/lang/String;)Z")) {
+        jstring stringArg1 = t.env->NewStringUTF(options.defaultPath.value_or(std::filesystem::path()).filename().string().c_str());
+
+        jboolean result = t.env->CallStaticBooleanMethod(t.classID, t.methodID, stringArg1);
+
+        t.env->DeleteLocalRef(stringArg1);
+        t.env->DeleteLocalRef(t.classID);
+        if (!result) {
+            return RetTask::immediate(Err("Failed to open file picker"));
+        }
+    }
+    return RetTask::runWithCallback([] (auto result, auto progress, auto cancelled) {
+        const std::lock_guard lock(s_callbackMutex);
+        s_fileBytesCallback = result;
+        s_taskCancelled = cancelled;
+    });
+}
+
+
 Task<Result<std::filesystem::path>> file::pick(file::PickMode mode, file::FilePickOptions const& options) {
     using RetTask = Task<Result<std::filesystem::path>>;
 
     const std::lock_guard lock(s_callbackMutex);
-    if (s_fileCallback || s_filesCallback || s_taskCancelled) {
+    if (s_fileCallback || s_filesCallback || s_fileBytesCallback || s_taskCancelled) {
         return RetTask::immediate(Err("File picker was already called this frame"));
     }
 
@@ -269,7 +341,7 @@ Task<Result<std::vector<std::filesystem::path>>> file::pickMany(FilePickOptions 
     using RetTask = Task<Result<std::vector<std::filesystem::path>>>;
 
     const std::lock_guard lock(s_callbackMutex);
-    if (s_fileCallback || s_filesCallback || s_taskCancelled) {
+    if (s_fileCallback || s_filesCallback || s_fileBytesCallback || s_taskCancelled) {
         return RetTask::immediate(Err("File picker was already called this frame"));
     }
 

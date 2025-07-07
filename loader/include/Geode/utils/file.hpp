@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <string>
 #include <unordered_set>
+#include <span>
 
 template <>
 struct matjson::Serialize<std::filesystem::path> {
@@ -301,6 +302,13 @@ namespace geode::utils::file {
          */
         std::vector<Filter> filters;
     };
+
+    /**
+     * Prompt the user to pick a file using the system's file system picker
+     * @param mode Type of file selection prompt to show
+     * @param options Picker options
+     */
+    GEODE_DLL Task<Result<std::span<const std::uint8_t>>> pickReadBytes(FilePickOptions const& options);
 
     /**
      * Prompt the user to pick a file using the system's file system picker

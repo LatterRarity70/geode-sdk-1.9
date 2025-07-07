@@ -297,6 +297,28 @@ void ModsLayer::onAddModFromFile(CCObject*) {
             350
         )->show();
     }
+
+#ifdef GEODE_IS_ANDROID
+    file::pickReadBytes(file::FilePickOptions {
+        .filters = { file::FilePickOptions::Filter {
+            .description = "Geode Mods",
+            .files = { "*.geode" },
+        }}
+    }).listen([](Result<std::span<const std::uint8_t>>* data) {
+        if (*data) {
+            LoaderImpl::get()->installModManuallyFromBytes(data->unwrap(), []() {
+                InstalledModListSource::get(InstalledModListType::All)->clearCache();
+            });
+        }
+        else {
+            FLAlertLayer::create(
+                "Unable to Select File",
+                data->unwrapErr().c_str(),
+                "OK"
+            )->show();
+        }
+    });
+#else
     file::pick(file::PickMode::OpenFile, file::FilePickOptions {
         .filters = { file::FilePickOptions::Filter {
             .description = "Geode Mods",
@@ -316,6 +338,7 @@ void ModsLayer::onAddModFromFile(CCObject*) {
             )->show();
         }
     });
+#endif
 }
 
 void ModsStatusNode::onRestart(CCObject*) {
