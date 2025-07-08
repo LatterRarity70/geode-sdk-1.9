@@ -99,6 +99,11 @@ Result<> Loader::Impl::setup() {
         }
     }
 
+    if (auto value = this->getLaunchArgument("binary-dir")) {
+        log::info("Using custom binary directory: {}", value.value());
+        m_binaryPath = value.value();
+    }
+
     if (this->getLaunchFlag("enable-tulip-hook-logs")) {
         log::info("Enabling TulipHook logs");
         tulip::hook::setLogCallback([](std::string_view msg) {
@@ -518,7 +523,7 @@ void Loader::Impl::loadModGraph(Mod* node, bool early) {
         }
 
         log::debug("Unzipping .geode file");
-        auto res = node->m_impl->unzipGeodeFile(node->getMetadataRef());
+        auto res = this->unzipGeodeFile(node->getMetadataRef());
         return res;
     };
 
@@ -927,16 +932,31 @@ void Loader::Impl::addUninitializedHook(Hook* hook, Mod* mod) {
     m_uninitializedHooks.emplace_back(hook, mod);
 }
 
-Result<> Loader::Impl::unzipGeodeFile(std::string modId) {
+static bool isPlatformBinary(std::string_view modID, std::string_view filename) {
+    if (!filename.starts_with(modID)) {
+        return false;
+    }
+
+    return filename.ends_with(".dll")
+        || filename.ends_with(".dylib")
+        || filename.ends_with(".android32.so")
+        || filename.ends_with(".android64.so")
+        || filename.ends_with(".ios.dylib");
+}
+
+Result<> Loader::Impl::unzipGeodeFile(ModMetadata metadata) {
     // Unzip .geode file into temp dir
-    auto tempDir = dirs::getModRuntimeDir() / modId;
-    auto extractPath = dirs::getModsDir() / (modId + ".geode");
-    std::string binaryName = modId + GEODE_PLATFORM_EXTENSION;
+    auto tempDir = dirs::getModRuntimeDir() / metadata.getID();
 
     auto datePath = tempDir / "modified-at";
     std::string currentHash = file::readString(datePath).unwrapOr("");
 
-    auto modifiedDate = std::filesystem::last_write_time(extractPath);
+    std::error_code ec;
+    auto modifiedDate = std::filesystem::last_write_time(metadata.getPath(), ec);
+    if (ec) {
+        auto message = formatSystemError(ec.value());
+        return Err("Unable to get last modified time of zip: " + message);
+    }
     auto modifiedCount = std::chrono::duration_cast<std::chrono::milliseconds>(modifiedDate.time_since_epoch());
     auto modifiedHash = std::to_string(modifiedCount.count());
     if (currentHash == modifiedHash) {
@@ -945,31 +965,82 @@ Result<> Loader::Impl::unzipGeodeFile(std::string modId) {
     }
     log::debug("Hash mismatch detected, unzipping");
 
-    std::error_code ec;
     std::filesystem::remove_all(tempDir, ec);
     if (ec) {
-        auto message = ec.message();
-        #ifdef GEODE_IS_WINDOWS
-            // Force the error message into English
-            message = formatSystemError(ec.value());
-        #endif
+        auto message = formatSystemError(ec.value());
         return Err("Unable to delete temp dir: " + message);
     }
 
     (void)utils::file::createDirectoryAll(tempDir);
 
-    GEODE_UNWRAP_INTO(auto unzip, file::Unzip::create(extractPath));
-    if (!unzip.hasEntry(binaryName)) {
+    GEODE_UNWRAP_INTO(auto unzip, file::Unzip::create(metadata.getPath()));
+    if (!unzip.hasEntry(metadata.getBinaryName())) {
         return Err(
-            fmt::format("Unable to find platform binary under the name \"{}\"", binaryName)
+            fmt::format("Unable to find platform binary under the name \"{}\"", metadata.getBinaryName())
         );
     }
     GEODE_UNWRAP(unzip.extractAllTo(tempDir));
 
+    // Delete binaries for other platforms since they're pointless
+    // The if should never fail, but you never know
+    for (auto& entry : std::filesystem::directory_iterator(tempDir)) {
+        if (entry.is_directory()) {
+            continue;
+        }
+
+        const std::string filename = geode::utils::string::pathToString(entry.path().filename());
+        if (filename == metadata.getBinaryName() || !isPlatformBinary(metadata.getID(), filename)) {
+            continue;
+        }
+
+        // The binary is not for our platform, delete!
+        // We don't really care if the deletion succeeds though.
+        std::error_code ec;
+        std::filesystem::remove(entry.path(), ec);
+    }
+
+    // Check if there is a binary that we need to move over from the unzipped binaries dir
+    if (this->isPatchless()) {
+        // TODO: enable in 4.7.0
+        // auto src = dirs::getModBinariesDir() / metadata.getBinaryName();
+        auto src = dirs::getModRuntimeDir() / "binaries" / metadata.getBinaryName();
+        auto dst = tempDir / metadata.getBinaryName();
+        if (std::filesystem::exists(src)) {
+            std::error_code ec;
+            std::filesystem::rename(src, dst, ec);
+            if (ec) {
+                auto message = formatSystemError(ec.value());
+                return Err(
+                    fmt::format("Failed to move binary from {} to {}: {}", src.string(), dst.string(), message)
+                );
+            }
+        }
+    }
+
     auto res = file::writeString(datePath, modifiedHash);
     if (!res) {
-        log::warn("Failed to write modified date of geode zip: {}", res.unwrapErr());
+        log::warn("Failed to write modified date of geode zip, will try to unzip next launch: {}", res.unwrapErr());
     }
+
+    return Ok();
+}
+
+Result<> Loader::Impl::extractBinary(ModMetadata metadata) {
+    if (!this->isPatchless()) {
+        // If we are not patchless, there is no need to extract the binary separately
+        return Ok();
+    }
+
+    // Extract the binary from the .geode file
+    GEODE_UNWRAP_INTO(auto unzip, file::Unzip::create(metadata.getPath()));
+    if (!unzip.hasEntry(metadata.getBinaryName())) {
+        return Err(
+            fmt::format("Unable to find platform binary under the name \"{}\"", metadata.getBinaryName())
+        );
+    }
+    // TODO: enable in 4.7.0
+    // GEODE_UNWRAP(unzip.extractTo(metadata.getBinaryName(), dirs::getModBinariesDir() / metadata.getBinaryName()));
+    GEODE_UNWRAP(unzip.extractTo(metadata.getBinaryName(), dirs::getModRuntimeDir() / "binaries" / metadata.getBinaryName()));
 
     return Ok();
 }
@@ -994,11 +1065,11 @@ void Loader::Impl::queueInMainThread(ScheduledFunction&& func) {
 }
 
 void Loader::Impl::executeMainThreadQueue() {
-    // copy queue to avoid locking mutex if someone is
+    // move queue to avoid locking mutex if someone is
     // running addToMainThread inside their function
     m_mainThreadMutex.lock();
-    auto queue = m_mainThreadQueue;
-    m_mainThreadQueue.clear();
+    auto queue = std::move(m_mainThreadQueue);
+    m_mainThreadQueue = {};
     m_mainThreadMutex.unlock();
 
     // call queue
@@ -1448,4 +1519,8 @@ bool Loader::Impl::hasExternalMods() const {
 
 bool Loader::Impl::isPatchless() const {
     return m_isPatchless;
+}
+
+std::optional<std::string> Loader::Impl::getBinaryPath() const {
+    return m_binaryPath;
 }

@@ -229,12 +229,17 @@ protected:
                 if (!mod->isInternal()) {
                     m_sprite->loadFromFile(dirs::getModRuntimeDir() / mod->getID() / "logo.png");
                 } else {
-                    // this is a silly workaround but it works i think?
                     if (mod->getID() == "geode.loader") {
-                        m_sprite->initWithSpriteFrameName("geode-logo.png"_spr);
+                        if (Mod::get()->getSavedValue("alternate-geode-style", false)) {
+                            m_sprite->initWithSpriteFrameName("geode-logo-alternate.png"_spr);
+                        }
+                        else {
+                            m_sprite->initWithSpriteFrameName("geode-logo.png"_spr);
+                        }
                     } else {
+                        // this is a silly workaround but it works i think?
                         auto filename = fmt::format("{}/logo.png", mod->getID());
-                        m_sprite->CCSprite::initWithFile(filename.c_str());
+                        m_sprite->initWithFile(filename.c_str());
                     }
                 }
             },
