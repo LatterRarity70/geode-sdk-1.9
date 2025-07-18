@@ -47,6 +47,8 @@ bool Loader::Impl::userTriedToLoadDLLs() const {
         "toastedmarshmellow.dll",
         "gdh.dll",
         "mimalloc.dll",
+        "polzhax.dll",
+        "matsnicehacks.dll"
     };
 
     bool triedToLoadDLLs = false;
