@@ -1,15 +1,19 @@
 #pragma once
 
-#include <json.hpp>
+#include <matjson.hpp>
+#include "ModPatch.hpp"
+#include <Geode/loader/Loader.hpp>
+#include <string_view>
+#include <Geode/loader/ModSettingsManager.hpp>
 
 namespace geode {
     class Mod::Impl {
     public:
         Mod* m_self;
         /**
-         * Mod info
+         * Mod metadata
          */
-        ModInfo m_info;
+        ModMetadata m_metadata;
         /**
          * Platform-specific info
          */
@@ -17,117 +21,147 @@ namespace geode {
         /**
          * Hooks owned by this mod
          */
-        std::vector<Hook*> m_hooks;
+        std::vector<std::shared_ptr<Hook>> m_hooks;
         /**
          * Patches owned by this mod
          */
-        std::vector<Patch*> m_patches;
+        std::vector<std::shared_ptr<Patch>> m_patches;
         /**
          * Whether the mod is enabled or not
          */
         bool m_enabled = false;
         /**
-         * Whether the mod binary is loaded or not
-         */
-        bool m_binaryLoaded = false;
-        /**
          * Mod temp directory name
          */
-        ghc::filesystem::path m_tempDirName;
+        std::filesystem::path m_tempDirName;
         /**
          * Mod save directory name
          */
-        ghc::filesystem::path m_saveDirPath;
+        std::filesystem::path m_saveDirPath;
         /**
-         * Pointers to mods that depend on
-         * this Mod. Makes it possible to
-         * enable / disable them automatically,
+         * Pointers to mods that depend on this Mod.
+         * Makes it possible to enable / disable them automatically,
          * when their dependency is disabled.
          */
-        std::vector<Mod*> m_parentDependencies;
+        std::vector<Mod*> m_dependants;
         /**
          * Saved values
          */
-        json::Value m_saved = json::Object();
+        matjson::Value m_saved = matjson::Value();
         /**
-         * Setting values
+         * Setting values. This is behind unique_ptr for interior mutability
          */
-        std::unordered_map<std::string, std::unique_ptr<SettingValue>> m_settings;
-        /**
-         * Settings save data. Stored for efficient loading of custom settings
-         */
-        json::Value m_savedSettingsData = json::Object();
-
+        std::unique_ptr<ModSettingsManager> m_settings = nullptr;
         /**
          * Whether the mod resources are loaded or not
          */
         bool m_resourcesLoaded = false;
+        /**
+         * Whether logging is enabled for this mod
+         */
+        bool m_loggingEnabled = true;
+        /**
+         * The minimum log level for this mod
+         */
+        Severity m_logLevel = Severity::Debug;
 
-        Impl(Mod* self, ModInfo const& info);
+        std::unordered_map<std::string, char const*> m_expandedSprites;
+
+        bool m_isCurrentlyLoading = false;
+
+        ModRequestedAction m_requestedAction = ModRequestedAction::None;
+
+        std::vector<LoadProblem> m_problems;
+
+        Impl(Mod* self, ModMetadata const& metadata);
         ~Impl();
+        Impl(Impl const&) = delete;
+        Impl(Impl&&) = delete;
 
         Result<> setup();
 
         Result<> loadPlatformBinary();
-        Result<> unloadPlatformBinary();
+        Result<> loadInternalBinary();
         Result<> createTempDir();
-
-        void setupSettings();
 
         std::string getID() const;
         std::string getName() const;
-        std::string getDeveloper() const;
+        std::vector<std::string> getDevelopers() const;
         std::optional<std::string> getDescription() const;
         std::optional<std::string> getDetails() const;
-        ghc::filesystem::path getPackagePath() const;
+        std::filesystem::path getPackagePath() const;
         VersionInfo getVersion() const;
         bool isEnabled() const;
-        bool isLoaded() const;
-        bool supportsDisabling() const;
-        bool supportsUnloading() const;
-        bool wasSuccesfullyLoaded() const;
-        ModInfo getModInfo() const;
-        ghc::filesystem::path getTempDir() const;
-        ghc::filesystem::path getBinaryPath() const;
+        bool isInternal() const;
+        bool needsEarlyLoad() const;
+        ModMetadata const& getMetadata() const;
+        std::filesystem::path getTempDir() const;
+        std::filesystem::path getBinaryPath() const;
 
-        json::Value& getSaveContainer();
+        matjson::Value& getSaveContainer();
+
+#if defined(GEODE_EXPOSE_SECRET_INTERNALS_IN_HEADERS_DO_NOT_DEFINE_PLEASE)
+        void setMetadata(ModMetadata const& metadata);
+        std::vector<Mod*> getDependants() const;
+        void setInternal(bool isInternal);
+#endif
 
         Result<> saveData();
         Result<> loadData();
 
-        ghc::filesystem::path getSaveDir() const;
-        ghc::filesystem::path getConfigDir(bool create = true) const;
+        std::filesystem::path getSaveDir() const;
+        std::filesystem::path getConfigDir(bool create = true) const;
+        std::filesystem::path getPersistentDir(bool create = true) const;
 
         bool hasSettings() const;
         std::vector<std::string> getSettingKeys() const;
-        bool hasSetting(std::string const& key) const;
-        std::optional<Setting> getSettingDefinition(std::string const& key) const;
-        SettingValue* getSetting(std::string const& key) const;
-        void registerCustomSetting(std::string const& key, std::unique_ptr<SettingValue> value);
+        bool hasSetting(std::string_view key) const;
 
-        std::vector<Hook*> getHooks() const;
-        Result<Hook*> addHook(Hook* hook);
-        Result<> enableHook(Hook* hook);
-        Result<> disableHook(Hook* hook);
-        Result<> removeHook(Hook* hook);
-        Result<Patch*> patch(void* address, ByteVector const& data);
-        Result<> unpatch(Patch* patch);
-        Result<> loadBinary();
-        Result<> unloadBinary();
+        std::string getLaunchArgumentName(std::string_view name) const;
+        std::vector<std::string> getLaunchArgumentNames() const;
+        bool hasLaunchArgument(std::string_view name) const;
+        std::optional<std::string> getLaunchArgument(std::string_view name) const;
+        bool getLaunchFlag(std::string_view name) const;
+
+        Result<Hook*> claimHook(std::shared_ptr<Hook> hook);
+        Result<> disownHook(Hook* hook);
+        [[nodiscard]] std::vector<Hook*> getHooks() const;
+
+        Result<Patch*> claimPatch(std::shared_ptr<Patch> patch);
+        Result<> disownPatch(Patch* patch);
+        [[nodiscard]] std::vector<Patch*> getPatches() const;
+
         Result<> enable();
         Result<> disable();
-        Result<> uninstall();
+        Result<> uninstall(bool deleteSaveData = false);
         bool isUninstalled() const;
-        bool depends(std::string const& id) const;
-        bool hasUnresolvedDependencies() const;
-        Result<> updateDependencies();
-        std::vector<Dependency> getUnresolvedDependencies();
 
-        char const* expandSpriteName(char const* name);
+        // 1.3.0 additions
+        ModRequestedAction getRequestedAction() const;
+
+        bool depends(std::string_view id) const;
+        Result<> updateDependencies();
+        bool hasUnresolvedDependencies() const;
+        bool hasUnresolvedIncompatibilities() const;
+
+        Result<> loadBinary();
+
+        std::string_view expandSpriteName(std::string_view name);
         ModJson getRuntimeInfo() const;
+
+        bool isLoggingEnabled() const;
+        void setLoggingEnabled(bool enabled);
+        Severity getLogLevel() const;
+        void setLogLevel(Severity level);
+
+        std::vector<LoadProblem> getProblems() const;
+
+        bool hasLoadProblems() const;
+        bool shouldLoad() const;
+        bool isCurrentlyLoading() const;
     };
 
-    class ModImpl : public Mod {
+    class ModImpl : public Mod::Impl {
     public:
         static Mod::Impl* get();
 

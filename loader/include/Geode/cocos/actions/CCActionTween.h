@@ -70,12 +70,18 @@ class CC_DLL CCActionTween : public CCActionInterval
 public:
     /** creates an initializes the action with the property name (key), and the from and to parameters. */
     static CCActionTween* create(float aDuration, const char* key, float from, float to);
+
+    static cocos2d::CCActionTween* create(float, int, float, float);
+
     /** initializes the action with the property name (key), and the from and to parameters. */
     bool initWithDuration(float aDuration, const char* key, float from, float to);
 
     void startWithTarget(CCNode *pTarget);
     void update(float dt);
     CCActionInterval* reverse();
+
+    // 2.2 addition
+    void updateTargetValue(float);
 
     gd::string        m_strKey;
     float            m_fFrom, m_fTo;

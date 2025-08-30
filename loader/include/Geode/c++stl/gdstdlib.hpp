@@ -2,8 +2,12 @@
 
 #include <Geode/platform/platform.hpp>
 
-#if defined(GEODE_IS_WINDOWS)
+#include "string.hpp"
+
+#if defined(GEODE_IS_ANDROID)
+#include "gnustl.hpp"
+#elif defined(GEODE_IS_WINDOWS)
 #include "msvcstl.hpp"
 #else
-#include "gnustl.hpp"
+#include "aliastl.hpp"
 #endif

@@ -7,57 +7,50 @@
 
 using namespace geode::prelude;
 
-namespace {
-    ghc::filesystem::path weaklyCanonical(ghc::filesystem::path const& path) {
-    #ifdef GEODE_IS_WINDOWS
-        // this is std::filesystem intentionally because ghc version doesnt want to work with softlinked directories
-        return std::filesystem::weakly_canonical(path.string()).string();
-    #else
-        return ghc::filesystem::weakly_canonical(path.string()).string();
-    #endif
-    }
-}
-
-ghc::filesystem::path dirs::getGeodeDir() {
+std::filesystem::path dirs::getGeodeDir() {
     return dirs::getGameDir() / "geode";
 }
 
-ghc::filesystem::path dirs::getGeodeSaveDir() {
+std::filesystem::path dirs::getGeodeSaveDir() {
     return dirs::getSaveDir() / "geode";
 }
 
-ghc::filesystem::path dirs::getGeodeResourcesDir() {
+std::filesystem::path dirs::getGeodeResourcesDir() {
     return dirs::getGeodeDir() / "resources";
 }
 
-ghc::filesystem::path dirs::getGeodeLogDir() {
+std::filesystem::path dirs::getGeodeLogDir() {
     return dirs::getGeodeDir() / "logs";
 }
 
-ghc::filesystem::path dirs::getTempDir() {
-    return getGeodeDir() / "temp";
+std::filesystem::path dirs::getTempDir() {
+    return dirs::getGeodeDir() / "temp";
 }
 
-ghc::filesystem::path dirs::getModsDir() {
-    return getGeodeDir() / "mods";
+std::filesystem::path dirs::getModsDir() {
+    return dirs::getGeodeDir() / "mods";
 }
 
-ghc::filesystem::path dirs::getModsSaveDir() {
-    return getGeodeSaveDir() / "mods";
+std::filesystem::path dirs::getModsSaveDir() {
+    return dirs::getGeodeSaveDir() / "mods";
 }
 
-ghc::filesystem::path dirs::getModRuntimeDir() {
-    return dirs::getGeodeDir() / "unzipped";
-}
-
-ghc::filesystem::path dirs::getModConfigDir() {
+std::filesystem::path dirs::getModConfigDir() {
     return dirs::getGeodeDir() / "config";
 }
 
-ghc::filesystem::path dirs::getIndexDir() {
+std::filesystem::path dirs::getIndexDir() {
     return dirs::getGeodeDir() / "index";
 }
 
-ghc::filesystem::path dirs::getCrashlogsDir() {
+std::filesystem::path dirs::getCrashlogsDir() {
     return crashlog::getCrashLogDirectory();
 }
+
+std::filesystem::path dirs::getModPersistentDir() {
+    return dirs::getSaveDir() / "geode-persistent";
+}
+
+// std::filesystem::path dirs::getModBinariesDir() {
+//     return dirs::getModRuntimeDir() / "binaries";
+// }

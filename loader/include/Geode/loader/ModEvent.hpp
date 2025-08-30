@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Event.hpp"
-
+#include <matjson.hpp>
 #include <optional>
 
 namespace geode {
@@ -10,9 +10,6 @@ namespace geode {
 
     enum class ModEventType {
         Loaded,
-        Unloaded,
-        Enabled,
-        Disabled,
         DataLoaded,
         DataSaved,
     };
@@ -20,7 +17,7 @@ namespace geode {
     /**
      * Event that is fired when a mod is loaded / unloaded / enabled / disabled
      */
-    class GEODE_DLL ModStateEvent : public Event {
+    class GEODE_DLL ModStateEvent final : public Event {
     protected:
         ModEventType m_type;
         Mod* m_mod;
@@ -34,7 +31,7 @@ namespace geode {
     /**
      * Listener for mod load/enable/disable/unload/data save events
      */
-    class GEODE_DLL ModStateFilter : public EventFilter<ModStateEvent> {
+    class GEODE_DLL ModStateFilter final : public EventFilter<ModStateEvent> {
     public:
         using Callback = void(ModStateEvent*);
 
@@ -43,16 +40,55 @@ namespace geode {
         Mod* m_mod;
 
     public:
-        ListenerResult handle(utils::MiniFunction<Callback> fn, ModStateEvent* event);
+        ListenerResult handle(std::function<Callback> fn, ModStateEvent* event);
 
         /**
          * Create a mod state listener
-         * @param mod The mod whose events to listen to, or nullptr to listen to 
+         * @param mod The mod whose events to listen to, or nullptr to listen to
          * all mods' all state events
          * @param type Type of event to listen to. Ignored if mod is nullptr
          */
         ModStateFilter(Mod* mod, ModEventType type);
         ModStateFilter(ModStateFilter const&) = default;
+    };
+
+    /**
+     * Event posted to a mod when another mod that depends on it is loaded
+     */
+    class GEODE_DLL DependencyLoadedEvent final : public Event {
+    protected:
+        class Impl;
+        std::unique_ptr<Impl> m_impl;
+
+    public:
+        DependencyLoadedEvent(Mod* target, Mod* dependency);
+        virtual ~DependencyLoadedEvent();
+
+        Mod* getTarget() const;
+        Mod* getDependency() const;
+        matjson::Value getDependencySettings() const;
+    };
+
+    /**
+     * Listen for in a mod when a mod that depends on it is loaded
+     */
+    class GEODE_DLL DependencyLoadedFilter final : public EventFilter<DependencyLoadedEvent> {
+    public:
+        using Callback = void(DependencyLoadedEvent*);
+
+    protected:
+        class Impl;
+        std::unique_ptr<Impl> m_impl;
+
+    public:
+        ListenerResult handle(std::function<Callback> fn, DependencyLoadedEvent* event);
+
+        DependencyLoadedFilter(Mod* target = geode::getMod());
+        DependencyLoadedFilter(DependencyLoadedFilter&&);
+        DependencyLoadedFilter(DependencyLoadedFilter const&);
+        DependencyLoadedFilter& operator=(DependencyLoadedFilter const&);
+        DependencyLoadedFilter& operator=(DependencyLoadedFilter&&);
+        ~DependencyLoadedFilter();
     };
 }
 

@@ -5,12 +5,18 @@
 
 using namespace geode::prelude;
 
+static std::vector<CCTexturePack> REMOVED_PACKS;
 static std::vector<CCTexturePack> PACKS;
 static std::vector<std::string> PATHS;
-static bool DONT_ADD_PATHS = false;
 
 #pragma warning(push)
 #pragma warning(disable : 4273)
+
+std::optional<CCTexturePack> getTexturePack(std::string const& id) {
+    return ranges::find(PACKS, [id](CCTexturePack const& pack) {
+        return pack.m_id == id;
+    });
+}
 
 void CCFileUtils::addTexturePack(CCTexturePack const& pack) {
     // remove pack if it has already been added
@@ -23,10 +29,14 @@ void CCFileUtils::addTexturePack(CCTexturePack const& pack) {
 }
 
 void CCFileUtils::removeTexturePack(std::string const& id) {
-    ranges::remove(PACKS, [id](CCTexturePack const& pack) {
-        return pack.m_id == id;
-    });
-    this->updatePaths();
+    std::optional<CCTexturePack> pack = getTexturePack(id);
+    if (pack.has_value()) {
+        REMOVED_PACKS.push_back(pack.value());
+        ranges::remove(PACKS, [id](CCTexturePack const& pack) {
+            return pack.m_id == id;
+        });
+        this->updatePaths();
+    }
 }
 
 void CCFileUtils::addPriorityPath(char const* path) {
@@ -34,23 +44,38 @@ void CCFileUtils::addPriorityPath(char const* path) {
     this->updatePaths();
 }
 
+// cocos adds a trailing / to paths, so we need to check for that
+bool isPathEqual(std::filesystem::path const& cocosPath, std::filesystem::path const& ourPath) {
+    return cocosPath == ourPath || (cocosPath == (ourPath / ""));
+}
+
 void CCFileUtils::updatePaths() {
     // add search paths that aren't in PATHS or PACKS to PATHS
-
     for (auto& path : m_searchPathArray) {
+        std::filesystem::path const cocosPath = std::string(path);
         bool isKnown = false;
         for (auto& pack : PACKS) {
             for (auto& packPath : pack.m_paths) {
-                if (ghc::filesystem::path(path.c_str()) == packPath) {
+                if (isPathEqual(cocosPath, packPath)) {
                     isKnown = true;
                     break;
                 }
             }
             if (isKnown) break;
         }
-        if (isKnown) break;
+        if (isKnown) continue;
+        for (auto& pack : REMOVED_PACKS) {
+            for (auto& packPath : pack.m_paths) {
+                if (isPathEqual(cocosPath, packPath)) {
+                    isKnown = true;
+                    break;
+                }
+            }
+            if (isKnown) break;
+        }
+        if (isKnown) continue;
         for (auto& p : PATHS) {
-            if (ghc::filesystem::path(path.c_str()) == p) {
+            if (isPathEqual(cocosPath, p)) {
                 isKnown = true;
                 break;
             }
@@ -61,11 +86,8 @@ void CCFileUtils::updatePaths() {
     }
 
     // clear old paths
-
+    REMOVED_PACKS.clear();
     m_searchPathArray.clear();
-
-    // make sure addSearchPath doesn't add to PACKS or PATHS
-    DONT_ADD_PATHS = true;
 
     // add texture packs first
     for (auto& pack : PACKS) {
@@ -77,7 +99,6 @@ void CCFileUtils::updatePaths() {
     for (auto& path : PATHS) {
         this->addSearchPath(path.c_str());
     }
-    DONT_ADD_PATHS = false;
 }
 
 #pragma warning(pop)
@@ -92,5 +113,43 @@ struct FileUtilsUpdatePaths : Modify<FileUtilsUpdatePaths, CCFileUtils> {
             doAddPaths = false;
         }
         return ret;
+    }
+
+    gd::string fullPathForFilename(const char* filename, bool unk) override {
+        using namespace std::string_literals;
+        using namespace std::string_view_literals;
+
+        // this filename in particular (cc_2x2_white_image) is never cached because its not actually present anywhere.
+        // this is only an issue because cocos itself requests the full path for this in CCSprite,
+        // and with a lot of search paths (specially ones added by geode), this can cause a significant amount of lag.
+        // GJ_GameSheetIcons.png comes from an improper plist distributed in GDS :P
+        if (filename == "cc_2x2_white_image"sv) {
+            return filename;
+        }
+
+        return CCFileUtils::fullPathForFilename(filename, unk);
+    }
+
+    // 1.9 exclusive bugfix!
+    char const* fullPathFromRelativeFile(char const* pszFilename, char const* pszRelativeFile) override {
+        // detect if the path points to a resource file, in which case return the input
+        // kinda limited heuristic rn
+        bool slashPresent = false;
+        int periodCount = 0;
+        for (auto i = 0u; pszFilename[i]; i++) {
+            auto c = pszFilename[i];
+
+            if (c == '/') {
+                slashPresent = true;
+            } else if (c == '.') {
+                periodCount++;
+            }
+        }
+
+        if (slashPresent && periodCount > 1) {
+            return pszFilename;
+        }
+
+        return CCFileUtils::fullPathFromRelativeFile(pszFilename, pszRelativeFile);
     }
 };

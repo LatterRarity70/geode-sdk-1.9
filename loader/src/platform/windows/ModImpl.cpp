@@ -1,7 +1,5 @@
 #include <Geode/DefaultInclude.hpp>
 
-#ifdef GEODE_IS_WINDOWS
-
 #include <Geode/loader/Mod.hpp>
 #include <loader/ModImpl.hpp>
 
@@ -16,7 +14,7 @@ T findSymbolOrMangled(HMODULE load, char const* name, char const* mangled) {
     return res;
 }
 
-char const* getUsefulError(int code) {
+char const* getUsefulError(DWORD code) {
     switch (code) {
         case ERROR_MOD_NOT_FOUND:
             return "ERROR_MOD_NOT_FOUND; The mod is either missing the DLL "
@@ -51,48 +49,58 @@ std::string getLastWinError() {
     if (!err) return "None (0)";
     auto useful = getUsefulError(err);
     if (useful) return useful;
-    char* text = nullptr;
-    auto len = FormatMessageA(
-        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_IGNORE_INSERTS,
-        nullptr, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), text, 0, nullptr
-    );
-    std::string msg = "";
-    if (len == 0) {
-        msg = "Unknown";
-    }
-    else {
-        if (text != nullptr) {
-            msg = std::string(text, len);
-            LocalFree(text);
-        }
-        else {
-            msg = "Very Unknown";
-        }
-    }
-    return msg + " (" + std::to_string(err) + ")";
+
+    return formatSystemError(err);
 }
 
 Result<> Mod::Impl::loadPlatformBinary() {
-    auto load = LoadLibraryW((m_tempDirName / m_info.binaryName()).wstring().c_str());
+    auto load = LoadLibraryW(this->getBinaryPath().wstring().c_str());
     if (load) {
         if (m_platformInfo) {
             delete m_platformInfo;
         }
         m_platformInfo = new PlatformInfo { load };
+
+        auto geodeImplicitEntry = findSymbolOrMangled<void(*)()>(load, "geodeImplicitEntry", "_geodeImplicitEntry@0");
+        if (geodeImplicitEntry) {
+            geodeImplicitEntry();
+        }
+
+        auto geodeCustomEntry = findSymbolOrMangled<void(*)()>(load, "geodeCustomEntry", "_geodeCustomEntry@0");
+        if (geodeCustomEntry) {
+            geodeCustomEntry();
+        }
         return Ok();
     }
     return Err("Unable to load the DLL: " + getLastWinError());
 }
 
-Result<> Mod::Impl::unloadPlatformBinary() {
-    auto hmod = m_platformInfo->m_hmod;
-    delete m_platformInfo;
-    if (FreeLibrary(hmod)) {
+Result<> Mod::Impl::loadInternalBinary() {
+    if (!m_metadata.getInternalBinary()) {
         return Ok();
     }
-    else {
-        return Err("Unable to free the DLL: " + getLastWinError());
-    }
-}
 
-#endif
+    auto internalBinary = *m_metadata.getInternalBinary();
+    auto internalBinaryFilename = internalBinary + ".dll";
+    auto filenameW = utils::string::utf8ToWide(internalBinaryFilename);
+
+    auto load = LoadLibraryExW(filenameW.c_str(), nullptr, LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (load) {
+        if (m_platformInfo) {
+            delete m_platformInfo;
+        }
+        m_platformInfo = new PlatformInfo { load };
+
+        auto geodeImplicitEntry = findSymbolOrMangled<void(*)()>(load, "geodeImplicitEntry", "_geodeImplicitEntry@0");
+        if (geodeImplicitEntry) {
+            geodeImplicitEntry();
+        }
+
+        auto geodeCustomEntry = findSymbolOrMangled<void(*)()>(load, "geodeCustomEntry", "_geodeCustomEntry@0");
+        if (geodeCustomEntry) {
+            geodeCustomEntry();
+        }
+        return Ok();
+    }
+    return Err("Unable to load the DLL: " + getLastWinError());
+}

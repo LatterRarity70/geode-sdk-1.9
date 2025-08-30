@@ -2,9 +2,10 @@
 
 #include "../DefaultInclude.hpp"
 #include <string_view>
-#include <json.hpp>
+#include <matjson.hpp>
 #include <tuple>
-#include "../utils/Result.hpp"
+#include <Geode/Result.hpp>
+#include <fmt/format.h>
 
 namespace geode {
     enum class VersionCompare {
@@ -13,11 +14,20 @@ namespace geode {
         MoreEq,
         Less,
         More,
+        Any
+    };
+
+    enum class VersionCompareResult {
+        TooOld,
+        Match,
+        TooNew,
+        MajorMismatch,
+        GenericMismatch
     };
 
     /**
-     * A version label, like v1.0.0-alpha or v2.3.4-prerelease. Limited to these 
-     * options; arbitary identifiers are not supported. Additional numbering 
+     * A version label, like v1.0.0-alpha or v2.3.4-prerelease. Limited to these
+     * options; arbitary identifiers are not supported. Additional numbering
      * may be added after the identifier, such as v1.0.0-beta.1
      */
     struct VersionTag {
@@ -108,8 +118,8 @@ namespace geode {
     }
 
     /**
-     * Class representing version information. Uses a limited subset of SemVer;  
-     * identifiers are restricted to a few predefined ones, and only one 
+     * Class representing version information. Uses a limited subset of SemVer;
+     * identifiers are restricted to a few predefined ones, and only one
      * identifier is allowed. See VersionTag for details
      */
     class GEODE_DLL VersionInfo final {
@@ -135,7 +145,7 @@ namespace geode {
             m_patch = patch;
             m_tag = tag;
         }
-        
+
         static Result<VersionInfo> parse(std::string const& string);
 
         constexpr size_t getMajor() const {
@@ -177,15 +187,17 @@ namespace geode {
                 std::tie(other.m_major, other.m_minor, other.m_patch, other.m_tag);
         }
 
-        std::string toString(bool includeTag = true) const;
+        std::string toVString(bool includeTag = true) const;
+        std::string toNonVString(bool includeTag = true) const;
+
+        friend GEODE_DLL std::string format_as(VersionInfo const& version);
     };
-    GEODE_DLL std::ostream& operator<<(std::ostream& stream, VersionInfo const& version);
 
     class GEODE_DLL ComparableVersionInfo final {
     protected:
         VersionInfo m_version;
         VersionCompare m_compare = VersionCompare::Exact;
-    
+
     public:
         constexpr ComparableVersionInfo() = default;
         constexpr ComparableVersionInfo(
@@ -196,46 +208,64 @@ namespace geode {
         static Result<ComparableVersionInfo> parse(std::string const& string);
 
         constexpr bool compare(VersionInfo const& version) const {
-            // opposing major versions never match
-            if (m_version.getMajor() != version.getMajor()) {
-                return false;
+            return compareWithReason(version) == VersionCompareResult::Match;
+        }
+
+        constexpr VersionCompareResult compareWithReason(VersionInfo const& version) const {
+            if (m_compare == VersionCompare::Any) {
+                return VersionCompareResult::Match;
             }
 
-            // the comparison works invertedly as a version like "v1.2.0" 
+            // opposing major versions never match
+            if (m_version.getMajor() != version.getMajor()) {
+                return VersionCompareResult::MajorMismatch;
+            }
+
+            // the comparison works invertedly as a version like "v1.2.0"
             // should return true for "<=v1.3.0"
             switch (m_compare) {
                 case VersionCompare::LessEq:
-                    return version <= m_version;
+                    return version <= m_version ? VersionCompareResult::Match : VersionCompareResult::TooNew;
                 case VersionCompare::MoreEq:
-                    return version >= m_version;
+                    return version >= m_version ? VersionCompareResult::Match : VersionCompareResult::TooOld;
                 case VersionCompare::Less:
-                    return version < m_version;
+                    return version < m_version ? VersionCompareResult::Match : VersionCompareResult::TooNew;
                 case VersionCompare::More:
-                    return version > m_version;
+                    return version > m_version ? VersionCompareResult::Match : VersionCompareResult::TooOld;
                 case VersionCompare::Exact:
-                    return version == m_version;
+                    return version == m_version ? VersionCompareResult::Match :
+                        (version > m_version) ? VersionCompareResult::TooOld : VersionCompareResult::TooNew;
+                default:
+                    return VersionCompareResult::GenericMismatch;
             }
         }
 
+        constexpr VersionCompare getComparison() const {
+            return m_compare;
+        }
+        constexpr VersionInfo getUnderlyingVersion() const {
+            return m_version;
+        }
+
         std::string toString() const;
+        friend GEODE_DLL std::string format_as(ComparableVersionInfo const& version);
     };
-    GEODE_DLL std::ostream& operator<<(std::ostream& stream, ComparableVersionInfo const& version);
+
+    bool GEODE_DLL semverCompare(VersionInfo const& current, VersionInfo const& target);
 }
 
 template <class V>
 requires std::is_same_v<V, geode::VersionInfo> || std::is_same_v<V, geode::ComparableVersionInfo>
-struct json::Serialize<V> {
-    static json::Value to_json(V const& info) {
-        return info.toString();
+struct matjson::Serialize<V> {
+    static geode::Result<V, std::string> fromJson(Value const& value) {
+        GEODE_UNWRAP_INTO(auto str, value.asString());
+        GEODE_UNWRAP_INTO(auto version, V::parse(str).mapErr([](auto&& err) {
+            return fmt::format("Invalid version format: {}", err);
+        }));
+        return geode::Ok(version);
     }
 
-    static V from_json(json::Value const& json) {
-        auto ver = V::parse(json.as_string());
-        if (!ver) {
-            throw json::JsonException(
-                "Invalid version format: " + ver.unwrapErr()
-            );
-        }
-        return ver.unwrap();
+    static Value toJson(V const& value) {
+        return Value(value.toNonVString());
     }
 };

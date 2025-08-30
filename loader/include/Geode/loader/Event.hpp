@@ -1,11 +1,15 @@
 #pragma once
 
 #include "../utils/casts.hpp"
-#include "../utils/MiniFunction.hpp"
 
 #include <Geode/DefaultInclude.hpp>
+#include <functional>
+#include <memory>
 #include <type_traits>
-#include <unordered_set>
+#include <mutex>
+#include <deque>
+#include <atomic>
+#include <vector>
 
 namespace geode {
     class Mod;
@@ -29,12 +33,27 @@ namespace geode {
         EventListenerPool(EventListenerPool const&) = delete;
         EventListenerPool(EventListenerPool&&) = delete;
     };
-    
+
+    template <class... Args>
+    class DispatchEvent;
+
+    template <class... Args>
+    class DispatchFilter;
+
     class GEODE_DLL DefaultEventListenerPool : public EventListenerPool {
     protected:
-        std::atomic_size_t m_locked = 0;
-        std::vector<EventListenerProtocol*> m_listeners;
-        std::vector<EventListenerProtocol*> m_toAdd;
+        // fix this in Geode 4.0.0
+        struct Data {
+            std::atomic_size_t m_locked = 0;
+            std::mutex m_mutex;
+            std::deque<EventListenerProtocol*> m_listeners;
+            std::vector<EventListenerProtocol*> m_toAdd;
+        };
+        std::unique_ptr<Data> m_data;
+
+    private:
+        static DefaultEventListenerPool* create();
+        DefaultEventListenerPool();
 
     public:
         bool add(EventListenerProtocol* listener) override;
@@ -42,6 +61,12 @@ namespace geode {
         ListenerResult handle(Event* event) override;
 
         static DefaultEventListenerPool* get();
+
+        template <class... Args>
+        friend class DispatchEvent;
+
+        template <class... Args>
+        friend class DispatchFilter;
     };
 
     class GEODE_DLL EventListenerProtocol {
@@ -67,7 +92,7 @@ namespace geode {
 
     template <typename T>
     concept is_event = std::is_base_of_v<Event, T>;
-    
+
     template <is_event T>
     class EventFilter {
     protected:
@@ -77,7 +102,8 @@ namespace geode {
         using Callback = ListenerResult(T*);
         using Event = T;
 
-        ListenerResult handle(utils::MiniFunction<Callback> fn, T* e) {
+        template <typename F> requires (std::is_invocable_r_v<ListenerResult, F, T*>)
+        ListenerResult handle(F&& fn, T* e) {
             return fn(e);
         }
 
@@ -88,16 +114,20 @@ namespace geode {
         void setListener(EventListenerProtocol* listener) {
             m_listener = listener;
         }
-
         EventListenerProtocol* getListener() const {
             return m_listener;
         }
     };
 
     template <typename T>
-    concept is_filter = std::is_base_of_v<EventFilter<typename T::Event>, T> &&
-        requires(T a) {
-            a.handle(std::declval<typename T::Callback>(), std::declval<typename T::Event*>());
+    concept is_filter = // # no need to do this IMO - HJfod # std::is_base_of_v<EventFilter<typename T::Event>, T> &&
+        requires(T a, T const& ca) {
+            typename T::Callback;
+            typename T::Event;
+            { a.handle(std::declval<typename T::Callback>(), std::declval<typename T::Event*>()) } -> std::same_as<ListenerResult>;
+            { ca.getPool() } -> std::convertible_to<EventListenerPool*>;
+            { a.setListener(std::declval<EventListenerProtocol*>()) } -> std::same_as<void>;
+            { ca.getListener() } -> std::convertible_to<EventListenerProtocol*>;
         };
 
     template <is_filter T>
@@ -126,7 +156,7 @@ namespace geode {
             this->enable();
         }
 
-        EventListener(utils::MiniFunction<Callback> fn, T filter = T())
+        EventListener(std::function<Callback> fn, T filter = T())
           : m_callback(fn), m_filter(filter)
         {
             m_filter.setListener(this);
@@ -163,8 +193,22 @@ namespace geode {
             this->enable();
         }
 
-        void bind(utils::MiniFunction<Callback> fn) {
-            m_callback = fn;
+        EventListener& operator=(EventListener&& other) {
+            if (this == &other) {
+                return *this;
+            }
+
+            m_callback = std::move(other.m_callback);
+            m_filter = std::move(other.m_filter);
+
+            m_filter.setListener(this);
+            other.disable();
+
+            return *this;
+        }
+
+        void bind(std::function<Callback> fn) {
+            m_callback = std::move(fn);
         }
 
         template <typename C>
@@ -173,7 +217,7 @@ namespace geode {
         }
 
         void setFilter(T filter) {
-            m_filter = filter;
+            m_filter = std::move(filter);
             m_filter.setListener(this);
         }
 
@@ -185,12 +229,12 @@ namespace geode {
             return m_filter;
         }
 
-        utils::MiniFunction<Callback>& getCallback() {
+        std::function<Callback>& getCallback() {
             return m_callback;
         }
 
     protected:
-        utils::MiniFunction<Callback> m_callback = nullptr;
+        std::function<Callback> m_callback = nullptr;
         T m_filter;
     };
 
@@ -209,7 +253,13 @@ namespace geode {
         ListenerResult post() {
             return postFromMod(getMod());
         }
-        
+
         virtual ~Event();
     };
+
+    // Creates an EventListener that is active for the entire lifetime of the game. You have no way of disabling the listener, so only use this if you want to always listen for certain events!
+    template <is_filter T>
+    void globalListen(typename T::Callback callback, T filter = T()) {
+        new EventListener<T>(callback, filter);
+    }
 }

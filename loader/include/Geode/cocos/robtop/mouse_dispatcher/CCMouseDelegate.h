@@ -4,44 +4,44 @@
 #include "../../include/ccMacros.h"
 #include "../../cocoa/CCObject.h"
 
-RT_ADD(
-	NS_CC_BEGIN
+NS_CC_BEGIN
 
-	class CC_DLL CCMouseDelegate 
-	{
-	public:
-		virtual void rightKeyDown() {}
+// @note RobTop Addition
+class CC_DLL CCMouseDelegate
+{
+public:
+	virtual void rightKeyDown() {}
 
-		virtual void rightKeyUp() {}
+	virtual void rightKeyUp() {}
 
-		virtual void scrollWheel(float x, float y) {}
+	virtual void scrollWheel(float x, float y) {}
 
-		//pretty certain there's no fields, based on initializer
-	};
+	//pretty certain there's no fields, based on initializer
+};
 
-	class CC_DLL CCMouseHandler : public CCObject
-	{
-	public:
-		GEODE_CUSTOM_CONSTRUCTOR_COCOS(CCMouseHandler, CCObject)
-		inline CCMouseHandler() = default;
-		
-		virtual ~CCMouseHandler();
+// @note RobTop Addition
+class CC_DLL CCMouseHandler : public CCObject
+{
+public:
+	GEODE_CUSTOM_CONSTRUCTOR_COCOS(CCMouseHandler, CCObject)
+	inline CCMouseHandler() = default;
 
-		CCMouseHandler& operator=(const CCMouseHandler&);
+	virtual ~CCMouseHandler();
 
-		CCMouseDelegate* getDelegate();
+	CCMouseHandler& operator=(const CCMouseHandler&);
 
-		static CCMouseHandler* handlerWithDelegate(CCMouseDelegate* pDelegate);
+	CCMouseDelegate* getDelegate();
 
-		virtual bool initWithDelegate(CCMouseDelegate* pDelegate);
+	static CCMouseHandler* handlerWithDelegate(CCMouseDelegate* pDelegate);
 
-		void setDelegate(CCMouseDelegate* pDelegate);
+	virtual bool initWithDelegate(CCMouseDelegate* pDelegate);
 
-	protected:
-		CCMouseDelegate* m_pDelegate;
-	};
+	void setDelegate(CCMouseDelegate* pDelegate);
 
-	NS_CC_END
-)
+public:
+	CCMouseDelegate* m_pDelegate;
+};
+
+NS_CC_END
 
 #endif

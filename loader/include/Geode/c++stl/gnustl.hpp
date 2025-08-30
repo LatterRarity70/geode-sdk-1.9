@@ -3,255 +3,35 @@
 #include <algorithm>
 #include <map>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <set>
 #include <vector>
 
 namespace geode::base {
     uintptr_t get();
 }
 
-#if defined(GEODE_IS_MACOS) || defined(GEODE_IS_ANDROID)
+#if defined(GEODE_IS_ANDROID)
+
+    #include "gnustl/functexcept.h"
+    #include "gnustl/stl_vector.h"
+    #include "gnustl/stl_bvector.h"
+    #include "gnustl/vector.tcc"
+    #include "gnustl/stl_map.h"
+    #include "gnustl/stl_set.h"
+    #include "gnustl/unordered_map.hpp"
+    #include "gnustl/unordered_set.hpp"
+    #include "gnustl/hash_specialization.hpp"
+    #undef _GLIBCXX_RELEASE
+    #undef __GLIBCXX__
+    #undef _GLIBCXX_USE_DUAL_ABI
+
 namespace gd {
-    struct _internal_string {
-        size_t m_len;
-        size_t m_capacity;
-        int m_refcount;
-    };
+    using namespace geode::stl;
 
-    class GEODE_DLL string {
-    public:
-        string();
-        string(char const* ok);
-
-        string(std::string ok) : string(ok.c_str()) {}
-
-        operator std::string() const {
-            return std::string((char*)m_data, m_data[-1].m_len);
-        }
-
-        bool operator<(string const& other) const;
-
-        bool operator==(string const& other) const;
-        string(string const& ok);
-        string& operator=(char const* ok);
-        string& operator=(string const& ok);
-        __attribute__((noinline)) ~string();
-
-        char const* c_str() const {
-            return (char const*)m_data;
-        }
-
-        size_t size() const {
-            return m_data[-1].m_len;
-        }
-
-    protected:
-        _internal_string* m_data;
-    };
-
-    struct _rb_tree_base {
-        bool m_isblack;
-        _rb_tree_base* m_parent;
-        _rb_tree_base* m_left;
-        _rb_tree_base* m_right;
-    };
-
-    template <typename T>
-    struct _rb_tree_node : public _rb_tree_base {
-        T m_value;
-    };
-
-    template <typename K, typename V>
-    class GEODE_DLL map {
-    protected:
-        std::less<K> compare;
-        _rb_tree_base m_header;
-        size_t m_nodecount;
-
-    public:
-        typedef _rb_tree_node<std::pair<K, V>>* _tree_node;
-
-        std::map<K, V> std();
-
-        operator std::map<K, V>();
-
-        operator std::map<K, V>() const;
-
-        void insert(_tree_node x, _tree_node p, std::pair<K, V> const& val);
-
-        void insert_pair(std::pair<K, V> const& val);
-
-        map(std::map<K, V> input);
-
-        void erase(_tree_node x);
-
-        map(map const& lol);
-
-        map();
-
-        ~map();
-    };
-
-    // template <class Type>
-    // using vector = std::vector<Type>;
-
-    template <typename T>
-    class GEODE_DLL vector {
-    public:
-        using value_type = T;
-
-        auto allocator() const {
-            return std::allocator<T>();
-        }
-
-        operator std::vector<T>() const {
-            return std::vector<T>(m_start, m_finish);
-        }
-
-        vector() {
-            m_start = nullptr;
-            m_finish = nullptr;
-            m_reserveEnd = nullptr;
-        }
-
-        vector(std::vector<T> const& input) : vector() {
-            if (input.size()) {
-                m_start = this->allocator().allocate(input.size());
-                m_finish = m_start + input.size();
-                m_reserveEnd = m_start + input.size();
-
-                std::copy(input.begin(), input.end(), m_start);
-            }
-        }
-
-        vector(gd::vector<T> const& input) : vector() {
-            if (input.size()) {
-                m_start = this->allocator().allocate(input.size());
-                m_finish = m_start + input.size();
-                m_reserveEnd = m_start + input.size();
-
-                std::copy(input.begin(), input.end(), m_start);
-            }
-        }
-
-        vector(gd::vector<T>&& input) : vector() {
-            m_start = input.m_start;
-            m_finish = input.m_finish;
-            m_reserveEnd = input.m_reserveEnd;
-
-            input.m_start = nullptr;
-            input.m_finish = nullptr;
-            input.m_reserveEnd = nullptr;
-        }
-
-        vector& operator=(gd::vector<T> const& input) {
-            this->clear();
-
-            if (input.size()) {
-                m_start = this->allocator().allocate(input.size());
-                m_finish = m_start + input.size();
-                m_reserveEnd = m_start + input.size();
-
-                std::copy(input.begin(), input.end(), m_start);
-            }
-
-            return *this;
-        }
-
-        vector& operator=(gd::vector<T>&& input) {
-            m_start = input.m_start;
-            m_finish = input.m_finish;
-            m_reserveEnd = input.m_reserveEnd;
-
-            input.m_start = nullptr;
-            input.m_finish = nullptr;
-            input.m_reserveEnd = nullptr;
-
-            return *this;
-        }
-
-        vector(std::initializer_list<T> const& input) : vector() {
-            if (input.size()) {
-                m_start = this->allocator().allocate(input.size());
-                m_finish = m_start + input.size();
-                m_reserveEnd = m_start + input.size();
-
-                std::copy(input.begin(), input.end(), m_start);
-            }
-        }
-
-        void clear() {
-            if (m_start) {
-                std::destroy(m_start, m_finish);
-
-                this->allocator().deallocate(m_start, this->size());
-            }
-
-            m_start = nullptr;
-            m_finish = nullptr;
-            m_reserveEnd = nullptr;
-        }
-
-        T& operator[](size_t index) {
-            return m_start[index];
-        }
-
-        T const& operator[](size_t index) const {
-            return m_start[index];
-        }
-
-        T& at(size_t index) {
-            if (index >= this->size()) {
-                throw std::out_of_range("gd::vector::at");
-            }
-            return m_start[index];
-        }
-
-        T const& at(size_t index) const {
-            if (index >= this->size()) {
-                throw std::out_of_range("gd::vector::at");
-            }
-            return m_start[index];
-        }
-
-        T& front() {
-            return *m_start;
-        }
-
-        T* begin() {
-            return m_start;
-        }
-
-        T* end() {
-            return m_finish;
-        }
-
-        T const* begin() const {
-            return m_start;
-        }
-
-        T const* end() const {
-            return m_finish;
-        }
-
-        ~vector() {
-            for (auto i = m_start; i != m_finish; ++i) {
-                delete i;
-            }
-        }
-
-        size_t size() const {
-            return m_finish - m_start;
-        }
-
-        size_t capacity() const {
-            return m_reserveEnd - m_start;
-        }
-
-    protected:
-        T* m_start;
-        T* m_finish;
-        T* m_reserveEnd;
-    };
+    void* operatorNew(size_t size);
+    void operatorDelete(void* ptr);
 
     struct _bit_reference {
         uintptr_t* m_bitptr;
@@ -313,64 +93,24 @@ namespace gd {
         }
     };
 
-    template <>
-    class vector<bool> {
-    protected:
-        _bit_iterator m_start;
-        _bit_iterator m_end;
-        uintptr_t* m_capacity_end;
+    template<typename Tp, typename Alloc = allocator<Tp>>
+    using vector = geode::stl::vector<Tp, Alloc>;
 
-    public:
-        auto allocator() const {
-            return std::allocator<uintptr_t>();
-        }
+    template<typename Key, typename Tp, typename Compare = geode::stl::less<Key>, typename Alloc = allocator<Key>>
+    using map = geode::stl::map<Key, Tp, Compare, Alloc>;
 
-        vector() : m_start(nullptr), m_end(nullptr), m_capacity_end(nullptr) {}
+    template<typename Key, typename Compare = geode::stl::less<Key>, typename Alloc = allocator<Key>>
+    using set = geode::stl::set<Key, Compare, Alloc>;
 
-        // vector(std::vector<bool> input) : vector() {
-        //     auto realsize = input.size() / int(sizeof(uintptr_t));
-        //     auto start = this->allocator().allocate(realsize);
+    template <class Key, class Tp, class Hash = geode::stl::hash<Key>, class Pred = geode::stl::equal_to<Key>, class Alloc = allocator<std::pair<const Key, Tp>>>
+    using unordered_map = geode::stl::unordered_map<Key, Tp, Hash, Pred, Alloc>;
 
-        //     m_start = _bit_iterator(start);
-        //     m_end = _bit_iterator(start + realsize, input.size() % sizeof(uintptr_t));
-        //     m_capacity_end = start + realsize;
-
-        //     auto itmp = m_start;
-        //     for (auto i : input) {
-        //         *itmp = i;
-        //         ++itmp;
-        //     }
-        // }
-
-        // vector(vector<bool> const& input) : vector() {
-
-        // }
-
-        // vector() : vector(std::vector<bool>()) {}
-
-        ~vector() {
-            delete[] m_start.m_bitptr;
-        }
-
-        operator std::vector<bool>() const {
-            std::vector<bool> out;
-            for (auto i = m_start; i != m_end; ++i) {
-                out.push_back(*i);
-            }
-            return out;
-        }
-
-        _bit_reference operator[](size_t index) {
-            auto const real_index = index / sizeof(uintptr_t);
-            auto const offset = index % sizeof(uintptr_t);
-            return _bit_reference(&m_start.m_bitptr[real_index], 1UL << offset);
-        }
-
-        bool operator[](size_t index) const {
-            return const_cast<vector&>(*this)[index];
-        }
-    };
+    template <class Value, class Hash = geode::stl::hash<Value>, class Pred = geode::stl::equal_to<Value>, class Alloc = allocator<Value>>
+    using unordered_set = geode::stl::unordered_set<Value, Hash, Pred, Alloc>;
 };
+
+template <>
+struct std::__ndk1::iterator_traits<typename gd::vector<char>::iterator> : std::__ndk1::iterator_traits<char*> {};
 
 #elif defined(GEODE_IS_IOS)
 namespace gd {

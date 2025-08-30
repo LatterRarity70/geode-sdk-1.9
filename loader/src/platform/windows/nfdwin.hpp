@@ -10,8 +10,6 @@
 
 #include <Geode/DefaultInclude.hpp>
 
-#ifdef GEODE_IS_WINDOWS
-
 #ifdef __MINGW32__
 // Explicitly setting NTDDI version, this is necessary for the MinGW compiler
 #define NTDDI_VERSION NTDDI_VISTA
@@ -43,6 +41,8 @@
 #define NFD_UTF8_BOM "\xEF\xBB\xBF"
 
 #include <stddef.h>
+#include <Geode/Result.hpp>
+#include <Geode/utils/file.hpp>
 
 using namespace geode::prelude;
 
@@ -58,5 +58,3 @@ Result<> nfdPick(
     file::FilePickOptions const& options,
     void* result
 );
-
-#endif

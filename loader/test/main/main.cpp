@@ -1,8 +1,9 @@
 #include <Geode/Loader.hpp>
-#include <Geode/loader/ModJsonTest.hpp>
 #include <Geode/loader/ModEvent.hpp>
 #include <Geode/utils/cocos.hpp>
+#include <chrono>
 #include "../dependency/main.hpp"
+#include "Geode/utils/general.hpp"
 
 using namespace geode::prelude;
 
@@ -12,24 +13,51 @@ auto test = []() {
 };
 
 // Exported functions
-$on_mod(Enabled) {
-    log::info("Enabled");
-}
-$on_mod(Disabled) {
-    log::info("Disabled");
-}
 $on_mod(Loaded) {
     log::info("Loaded");
 }
-$on_mod(Unloaded) {
-    log::info("Unloaded");
-}
+
+static std::string s_recievedEvent;
 
 // Events
 $execute {
     new EventListener<TestEventFilter>(+[](TestEvent* event) {
         log::info("Received event: {}", event->getData());
+        s_recievedEvent = event->getData();
     });
+}
+
+// Coroutines
+#include <Geode/utils/async.hpp>
+auto advanceFrame() {
+    auto [task, finish, progress, cancelled] = Task<void>::spawn();
+    queueInMainThread(std::bind(finish, true));
+
+    return task;
+}
+
+$execute {
+    $async() {
+        auto start = std::chrono::steady_clock::now();
+        log::info("Waiting for 10 frames...");
+        for (int i = 0; i < 10; ++i)
+            co_await advanceFrame();
+
+        log::info("Finished waiting! Took {} seconds", std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - start
+        ).count());
+    };
+
+    auto output = $try<VersionInfo> {
+        log::info("Parsing number 123: {}", co_await utils::numFromString<int>("123"));
+        log::info("Parsing number 12.3: {}", co_await utils::numFromString<int>("12.3"));
+
+        co_return VersionInfo::parse("1.2.3-alpha.4");
+    };
+
+    if (!output) {
+        log::info("$try successfully caught error");
+    }
 }
 
 #include <Geode/modify/MenuLayer.hpp>
@@ -37,12 +65,51 @@ struct $modify(MenuLayer) {
     bool init() {
         if (!MenuLayer::init())
             return false;
-        
+
         auto node = CCNode::create();
         auto ref = WeakRef(node);
         log::info("ref: {}", ref.lock().data());
         node->release();
         log::info("ref: {}", ref.lock().data());
+
+        // Launch arguments
+        log::info("Testing launch args...");
+        log::NestScope nest;
+        log::info("For global context:");
+        {
+            log::NestScope nest;
+            for (const auto& arg : Loader::get()->getLaunchArgumentNames()) {
+                log::info("{}", arg);
+            }
+        }
+        log::info("For this mod:");
+        {
+            log::NestScope nest;
+            for (const auto& arg : Mod::get()->getLaunchArgumentNames()) {
+                log::info("{}", arg);
+            }
+        }
+        log::info("Mod has launch arg 'mod-arg': {}", Mod::get()->hasLaunchArgument("mod-arg"));
+        log::info("Loader flag 'bool-arg': {}", Loader::get()->getLaunchFlag("bool-arg"));
+        log::info("Loader int 'int-arg': {}", Loader::get()->parseLaunchArgument<int>("int-arg").unwrapOr(0));
+
+        log::debug("should run second!");
+
+        if (GEODE_UNWRAP_IF_OK(val, api::addNumbers(5, 6))) {
+            log::info("5 + 6 = {}", val);
+        }
+        else {
+            log::error("Failed to API (function)");
+        }
+
+        api::Test test;
+        if (GEODE_UNWRAP_IF_OK(val, test.addNumbers(5, 6))) {
+            log::info("5 + 6 = {}", val);
+        }
+        else {
+            log::error("Failed to API (method)");
+        }
+
 
         return true;
     }
@@ -52,10 +119,10 @@ struct $modify(MenuLayer) {
 #include <Geode/modify/GJGarageLayer.hpp>
 
 struct GJGarageLayerTest : Modify<GJGarageLayerTest, GJGarageLayer> {
-    GJGarageLayerTest() : myValue(1907) {}
-
-    int myValue;
-    std::string myString = "yeah have fun finding a better thing for this";
+    struct Fields {
+        int myValue = 1907;
+        std::string myString = "yeah have fun finding a better thing for this";
+    };
 
     bool init() {
         if (!GJGarageLayer::init()) return false;
@@ -88,37 +155,39 @@ struct GJGarageLayerTest : Modify<GJGarageLayerTest, GJGarageLayer> {
         addChild(label2);
 
         // Dispatch system pt. 1
-        // auto fn = Dispatcher::get()->getFunction<void(GJGarageLayer*)>("test-garage-open");
-        // fn(this);
+        MyDispatchEvent("geode.test/test-garage-open", this).post();
+
+        if (s_recievedEvent.size() > 0) {
+            auto label = CCLabelBMFont::create("Event works!", "bigFont.fnt");
+            label->setPosition(100, 70);
+            label->setScale(.4f);
+            label->setZOrder(99999);
+            addChild(label);
+        }
 
         return true;
     }
 };
 
-/*// Event system pt. 2
-int a = (0, []() {
 
-        Dispatcher::get()->addSelector("test-garage-open", [](GJGarageLayer* gl) {
-                auto label = CCLabelBMFont::create("EventCenter works!", "bigFont.fnt");
-                label->setPosition(100, 80);
-                label->setScale(.4f);
-                label->setZOrder(99999);
-                gl->addChild(label);
+#include <Geode/modify/GJGarageLayer.hpp>
 
-                TestDependency::depTest(gl);
-        });
+struct GJGarageLayerTest2 : Modify<GJGarageLayerTest2, GJGarageLayer> {
+    struct Fields {
+        int myOtherValue = 80085;
+    };
 
-// Event system pt. 2
-// $observe("test-garage-open", GJGarageLayer*, evt) {
-// 	auto gl = evt.object();
-// 	auto label = CCLabelBMFont::create("EventCenter works!", "bigFont.fnt");
-// 	label->setPosition(100, 80);
-// 	label->setScale(.4f);
-// 	label->setZOrder(99999);
-// 	gl->addChild(label);
+    bool init() {
+        if (!GJGarageLayer::init()) return false;
 
-// 	// API pt. 2
-// 	TestDependency::depTest(gl);
-// }
-        return 0;
-}());*/
+        if (m_fields->myOtherValue == 80085) {
+            auto label = CCLabelBMFont::create("Alternate Fields works!", "bigFont.fnt");
+            label->setPosition(100, 60);
+            label->setScale(.4f);
+            label->setZOrder(99999);
+            this->addChild(label);
+        }
+
+        return true;
+    }
+};

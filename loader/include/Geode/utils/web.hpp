@@ -1,326 +1,399 @@
 #pragma once
 
-#include "../DefaultInclude.hpp"
-#include "MiniFunction.hpp"
-#include <json.hpp>
-#include "Result.hpp"
-#include "general.hpp"
-
-#include <ghc/fs_fwd.hpp>
-#include <mutex>
+#include <Geode/loader/Loader.hpp> // another great circular dependency fix
+#include <matjson.hpp>
+#include <Geode/Result.hpp>
+#include "Task.hpp"
+#include <chrono>
+#include <optional>
+#include <string_view>
+#include <span>
 
 namespace geode::utils::web {
     GEODE_DLL void openLinkInBrowser(std::string const& url);
 
-    using FileProgressCallback = utils::MiniFunction<bool(double, double)>;
+    // https://curl.se/libcurl/c/CURLOPT_HTTPAUTH.html
+    namespace http_auth {
+        constexpr static long BASIC = 0x0001;
+        constexpr static long DIGEST = 0x0002;
+        constexpr static long DIGEST_IE = 0x0004;
+        constexpr static long BEARER = 0x0008;
+        constexpr static long NEGOTIATE = 0x0010;
+        constexpr static long NTLM = 0x0020;
+        constexpr static long NTLM_WB = 0x0040;
+        constexpr static long ANY = 0x0080;
+        constexpr static long ANYSAFE = 0x0100;
+        constexpr static long ONLY = 0x0200;
+        constexpr static long AWS_SIGV4 = 0x0400;
+    }
 
-    /**
-     * Synchronously fetch data from the internet
-     * @param url URL to fetch
-     * @returns Returned data as bytes, or error on error
-     */
-    GEODE_DLL Result<ByteVector> fetchBytes(std::string const& url);
+    // https://curl.se/libcurl/c/CURLOPT_HTTP_VERSION.html
+    enum class HttpVersion {
+        DEFAULT,
+        VERSION_1_0,
+        VERSION_1_1,
+        VERSION_2_0,
+        VERSION_2TLS,
+        VERSION_2_PRIOR_KNOWLEDGE,
+        VERSION_3 = 30,
+        VERSION_3ONLY = 31
+    };
 
-    /**
-     * Synchronously fetch data from the internet
-     * @param url URL to fetch
-     * @returns Returned data as string, or error on error
-     */
-    GEODE_DLL Result<std::string> fetch(std::string const& url);
+    // https://curl.se/libcurl/c/CURLOPT_PROXYTYPE.html
+    enum class ProxyType {
+        HTTP, // HTTP
+        HTTPS, // HTTPS
+        HTTPS2, // HTTPS (attempt to use HTTP/2)
+        SOCKS4, // Socks4
+        SOCKS4A, // Socks4 with hostname resolution
+        SOCKS5, // Socks5
+        SOCKS5H, // Socks5 with hostname resolution
+    };
 
-    /**
-     * Syncronously download a file from the internet
-     * @param url URL to fetch
-     * @param into Path to download file into
-     * @param prog Progress function; first parameter is bytes downloaded so
-     * far, and second is total bytes to download. Return true to continue
-     * downloading, and false to interrupt. Note that interrupting does not
-     * automatically remove the file that was being downloaded
-     * @returns Returned data as JSON, or error on error
-     */
-    GEODE_DLL Result<> fetchFile(
-        std::string const& url, ghc::filesystem::path const& into, FileProgressCallback prog = nullptr
-    );
+    struct ProxyOpts {
+        std::string address; // Proxy address/FQDN
+        std::optional<std::uint16_t> port; // Proxy port
+        ProxyType type = ProxyType::HTTP; // Proxy type
+        long auth = http_auth::BASIC; // HTTP proxy auth method
+        std::string username; // Proxy username
+        std::string password; // Proxy password
+        bool tunneling = false; // Enable HTTP tunneling
+        bool certVerification = true; // Enable HTTPS certificate verification
+    };
 
-    /**
-     * Synchronously fetch data from the internet and parse it as JSON
-     * @param url URL to fetch
-     * @returns Returned data as JSON, or error on error
-     */
-    Result<json::Value> fetchJSON(std::string const& url);
-
-    class SentAsyncWebRequest;
-    template <class T>
-    class AsyncWebResult;
-    class AsyncWebResponse;
-    class AsyncWebRequest;
-
-    using AsyncProgress = utils::MiniFunction<void(SentAsyncWebRequest&, double, double)>;
-    using AsyncExpect = utils::MiniFunction<void(std::string const&)>;
-    using AsyncExpectCode = utils::MiniFunction<void(std::string const&, int)>;
-    using AsyncThen = utils::MiniFunction<void(SentAsyncWebRequest&, ByteVector const&)>;
-    using AsyncCancelled = utils::MiniFunction<void(SentAsyncWebRequest&)>;
-
-    /**
-     * A handle to an in-progress sent asynchronous web request. Use this to
-     * cancel the request / query information about it
-     */
-    class GEODE_DLL SentAsyncWebRequest {
+    /// Represents a multipart-form object to be sent in a `WebRequest`.
+    ///
+    /// @example
+    /// web::MultipartForm form;
+    /// form.param("key", "value");
+    /// form.param("key2", "value2");
+    /// form.file("file", { 0xAA, 0xBB, 0xCC }, "raw.bin");
+    /// form.file("file2", "path/to/image.png", "screenshot.png", "image/png");
+    ///
+    /// auto req = web::WebRequest()
+    ///     .bodyMultipart(form)
+    ///     .get(url);
+    class GEODE_DLL MultipartForm final {
     private:
         class Impl;
+
         std::shared_ptr<Impl> m_impl;
 
-        template <class T>
-        friend class AsyncWebResult;
-        friend class AsyncWebRequest;
-
-        void pause();
-        void resume();
-        void error(std::string const& error, int code);
-        void doCancel();
-
     public:
-        /**
-         * Do not call these manually.
-         */
-        SentAsyncWebRequest();
-        ~SentAsyncWebRequest();
-        static std::shared_ptr<SentAsyncWebRequest> create(AsyncWebRequest const&, std::string const& id);
+        MultipartForm();
+        ~MultipartForm();
 
-        /**
-         * Cancel the request. Cleans up any downloaded files, but if you run
-         * extra code in `then`, you will have to clean it up manually in
-         * `cancelled`
-         */
-        void cancel();
-        /**
-         * Check if the request is finished
-         */
-        bool finished() const;
-    };
-
-    using SentAsyncWebRequestHandle = std::shared_ptr<SentAsyncWebRequest>;
-
-    template <class T>
-    using DataConverter = Result<T> (*)(ByteVector const&);
-
-    /**
-     * An asynchronous, thread-safe web request. Downloads data from the
-     * internet without slowing the main thread. All callbacks are run in the
-     * GD thread, so interacting with the Cocos2d UI is perfectly safe
-     */
-    class GEODE_DLL AsyncWebRequest {
-    private:
-        std::optional<std::string> m_joinID;
-        std::string m_url;
-        AsyncThen m_then = nullptr;
-        AsyncExpectCode m_expect = nullptr;
-        AsyncProgress m_progress = nullptr;
-        AsyncCancelled m_cancelled = nullptr;
-        bool m_sent = false;
-        std::variant<std::monostate, std::ostream*, ghc::filesystem::path> m_target;
-        std::vector<std::string> m_httpHeaders;
-
-        template <class T>
-        friend class AsyncWebResult;
-        friend class SentAsyncWebRequest;
-        friend class AsyncWebResponse;
-
-    public:
-        /**
-         * An asynchronous, thread-safe web request. Downloads data from the
-         * internet without slowing the main thread. All callbacks are run in the
-         * GD thread, so interacting with the Cocos2d UI is perfectly safe
-         */
-        AsyncWebRequest() = default;
-
-        /**
-         * If you only want one instance of this web request to run (for example,
-         * you're downloading some global data for a manager), then use this
-         * to specify a Join ID. If another request with the same ID is
-         * already running, this request's callbacks will be appended to the
-         * existing one instead of creating a new request
-         * @param requestID The Join ID of the request. Can be anything,
-         * recommended to be something unique
-         * @returns Same AsyncWebRequest
-         */
-        AsyncWebRequest& join(std::string const& requestID);
-
-        /**
-         * In order to specify a http header to the request, give it here.
-         * Can be called more than once.
-         */
-        AsyncWebRequest& header(std::string const& header);
-        /**
-         * URL to fetch from the internet asynchronously
-         * @param url URL of the data to download. Redirects will be
-         * automatically followed
-         * @returns Same AsyncWebRequest
-         */
-        AsyncWebResponse fetch(std::string const& url);
-        /**
-         * Specify a callback to run if the download fails. The callback is
-         * always ran in the GD thread, so interacting with UI is safe
-         * @param handler Callback to run if the download fails
-         * @returns Same AsyncWebRequest
-         */
-        AsyncWebRequest& expect(AsyncExpect handler);
-        /**
-         * Specify a callback to run if the download fails. The callback is
-         * always ran in the GD thread, so interacting with UI is safe
-         * @param handler Callback to run if the download fails
-         * @returns Same AsyncWebRequest
-         */
-        AsyncWebRequest& expect(AsyncExpectCode handler);
-        /**
-         * Specify a callback to run when the download progresses. The callback is
-         * always ran in the GD thread, so interacting with UI is safe
-         * @param handler Callback to run when the download progresses
-         * @returns Same AsyncWebRequest
-         */
-        AsyncWebRequest& progress(AsyncProgress handler);
-        /**
-         * Specify a callback to run if the download is cancelled. The callback is
-         * always ran in the GD thread, so interacting with UI is safe. Web 
-         * requests may be cancelled after they are finished (for example, if 
-         * downloading files in bulk and one fails). In that case, handle 
-         * freeing up the results of `then` in this handler
-         * @param handler Callback to run if the download is cancelled
-         * @returns Same AsyncWebRequest
-         */
-        AsyncWebRequest& cancelled(AsyncCancelled handler);
-        /**
-         * Begin the web request. It's not always necessary to call this as the
-         * destructor calls it automatically, but if you need access to the
-         * handle of the sent request, use this
-         * @returns Handle to the sent web request
-         */
-        SentAsyncWebRequestHandle send();
-        ~AsyncWebRequest();
-    };
-
-    template <class T>
-    class AsyncWebResult {
-    private:
-        AsyncWebRequest& m_request;
-        DataConverter<T> m_converter;
-
-        AsyncWebResult(AsyncWebRequest& request, DataConverter<T> converter) :
-            m_request(request), m_converter(converter) {}
-
-        friend class AsyncWebResponse;
-
-    public:
-        /**
-         * Specify a callback to run after a download is finished. Runs in the
-         * GD thread, so interacting with UI is safe
-         * @param handle Callback to run
-         * @returns The original AsyncWebRequest, where you can specify more
-         * aspects about the request like failure and progress callbacks
-         */
-        AsyncWebRequest& then(utils::MiniFunction<void(T)> handle);
-        /**
-         * Specify a callback to run after a download is finished. Runs in the
-         * GD thread, so interacting with UI is safe
-         * @param handle Callback to run
-         * @returns The original AsyncWebRequest, where you can specify more
-         * aspects about the request like failure and progress callbacks
-         */
-        AsyncWebRequest& then(utils::MiniFunction<void(SentAsyncWebRequest&, T)> handle);
-    };
-
-    class GEODE_DLL AsyncWebResponse {
-    private:
-        AsyncWebRequest& m_request;
-
-        inline AsyncWebResponse(AsyncWebRequest& request) : m_request(request) {}
-
-        friend class AsyncWebRequest;
-
-    public:
-        /**
-         * Download into a stream. Make sure the stream lives for the entire
-         * duration of the request. If you want to download a file, use the
-         * `ghc::filesystem::path` overload of `into` instead
-         * @param stream Stream to download into. Make sure it lives long
-         * enough, otherwise the web request will crash
-         * @returns AsyncWebResult, where you can specify the `then` action for
-         * after the download is finished. The result has a `std::monostate`
-         * template parameter, as it can be assumed you know what you passed
-         * into `into`
-         */
-        AsyncWebResult<std::monostate> into(std::ostream& stream);
-        /**
-         * Download into a file
-         * @param path File to download into. If it already exists, it will
-         * be overwritten.
-         * @returns AsyncWebResult, where you can specify the `then` action for
-         * after the download is finished. The result has a `std::monostate`
-         * template parameter, as it can be assumed you know what you passed
-         * into `into`
-         */
-        AsyncWebResult<std::monostate> into(ghc::filesystem::path const& path);
-        /**
-         * Download into memory as a string
-         * @returns AsyncWebResult, where you can specify the `then` action for
-         * after the download is finished
-         */
-        AsyncWebResult<std::string> text();
-        /**
-         * Download into memory as a byte array
-         * @returns AsyncWebResult, where you can specify the `then` action for
-         * after the download is finished
-         */
-        AsyncWebResult<ByteVector> bytes();
-        /**
-         * Download into memory as JSON
-         * @returns AsyncWebResult, where you can specify the `then` action for
-         * after the download is finished
-         */
-        AsyncWebResult<json::Value> json();
-
-        /**
-         * Download into memory as a custom type. The data will first be
-         * downloaded into memory as a byte array, and then converted using
-         * the specified converter function
-         * @param converter Function that converts the data from a byte array
-         * to the desired type
-         * @returns AsyncWebResult, where you can specify the `then` action for
-         * after the download is finished
-         */
-        template <class T>
-        AsyncWebResult<T> as(DataConverter<T> converter) {
-            return AsyncWebResult(m_request, converter);
+        MultipartForm& param(std::string_view name, std::string_view value);
+        template <std::integral T>
+        MultipartForm& param(std::string_view name, T value) {
+            return this->param(name, fmt::to_string(value));
         }
+
+        MultipartForm& file(std::string_view name, std::span<uint8_t const> data, std::string_view filename, std::string_view mime = "application/octet-stream");
+        Result<MultipartForm&> file(std::string_view name, std::filesystem::path const& path, std::string_view mime = "application/octet-stream");
+
+        /**
+         * Returns the unique boundary string used in the multipart form.
+         * This will also finalize the form, so adding more parameters will not work.
+         * @return std::string const&
+         */
+        std::string const& getBoundary() const;
+
+        /**
+         * Returns the value for the Content-Type header with unique boundary string.
+         * This will also finalize the form, so adding more parameters will not work.
+         * @return std::string
+         */
+        std::string getHeader() const;
+
+        /**
+         * Returns merged body of all parameters and files, with the correct boundary.
+         * This will also finalize the form, so adding more parameters will not work.
+         * @return ByteVector
+         */
+        ByteVector getBody() const;
     };
 
-    template <class T>
-    AsyncWebRequest& AsyncWebResult<T>::then(utils::MiniFunction<void(T)> handle) {
-        m_request.m_then = [converter = m_converter,
-                            handle](SentAsyncWebRequest& req, ByteVector const& arr) {
-            auto conv = converter(arr);
-            if (conv) {
-                handle(conv.unwrap());
-            }
-            else {
-                req.error("Unable to convert value: " + conv.unwrapErr(), -1);
-            }
-        };
-        return m_request;
-    }
+    class WebRequest;
 
-    template <class T>
-    AsyncWebRequest& AsyncWebResult<T>::then(utils::MiniFunction<void(SentAsyncWebRequest&, T)> handle) {
-        m_request.m_then = [converter = m_converter,
-                            handle](SentAsyncWebRequest& req, ByteVector const& arr) {
-            auto conv = converter(arr);
-            if (conv) {
-                handle(req, conv.value());
-            }
-            else {
-                req.error("Unable to convert value: " + conv.error(), -1);
-            }
-        };
-        return m_request;
-    }
+    class GEODE_DLL WebResponse final {
+    private:
+        class Impl;
+
+        std::shared_ptr<Impl> m_impl;
+
+        friend class WebRequest;
+
+    public:
+        // Must be default-constructible for use in Promise
+        WebResponse();
+
+        bool ok() const;
+        int code() const;
+
+        Result<std::string> string() const;
+        Result<matjson::Value> json() const;
+        ByteVector data() const;
+        Result<> into(std::filesystem::path const& path) const;
+
+        std::vector<std::string> headers() const;
+        std::optional<std::string> header(std::string_view name) const;
+
+        /**
+         * Retrieves a list of all headers from the response with a given name - there can be
+         * multiple headers with the same name, such as Set-Cookie, with each cookie in a separate
+         * header
+         * @param name name of the header
+         * @return std::optional<std::vector<std::string>>
+         */
+        std::optional<std::vector<std::string>> getAllHeadersNamed(std::string_view name) const;
+
+        /**
+         * Returns additional error information, in case the request failed.
+         * In case the request did not fail, or no more information is available beyond what `string` returns,
+         * an empty string is returned.
+         */
+        std::string const& errorMessage() const;
+    };
+
+    class GEODE_DLL WebProgress final {
+    private:
+        class Impl;
+
+        std::shared_ptr<Impl> m_impl;
+
+        friend class WebRequest;
+
+    public:
+        // Must be default-constructible for use in Promise
+        WebProgress();
+
+        size_t downloaded() const;
+        size_t downloadTotal() const;
+        std::optional<float> downloadProgress() const;
+
+        size_t uploaded() const;
+        size_t uploadTotal() const;
+        std::optional<float> uploadProgress() const;
+    };
+
+    using WebTask = Task<WebResponse, WebProgress>;
+
+    class GEODE_DLL WebRequest final {
+    private:
+        class Impl;
+
+        std::shared_ptr<Impl> m_impl;
+    public:
+        WebRequest();
+        ~WebRequest();
+
+        WebTask send(std::string_view method, std::string_view url);
+        WebTask post(std::string_view url);
+        WebTask get(std::string_view url);
+        WebTask put(std::string_view url);
+        WebTask patch(std::string_view url);
+
+        WebRequest& header(std::string_view name, std::string_view value);
+        WebRequest& removeHeader(std::string_view name);
+        WebRequest& param(std::string_view name, std::string_view value);
+        template <std::integral T>
+        WebRequest& param(std::string_view name, T value) {
+            return this->param(name, fmt::to_string(value));
+        }
+        WebRequest& removeParam(std::string_view name);
+
+        /**
+         * Sets the request's user agent.
+         * Defaults to not sending the User-Agent: header.
+         *
+         * @param name
+         * @return WebRequest&
+         */
+        WebRequest& userAgent(std::string_view name);
+
+        /**
+         * Sets the response's encoding. Valid values include: br, gzip, deflate, ...
+         * You can set multiple encoding types by calling this method with a comma separated list
+         * of the encodings of your choosing.
+         * Defaults to not sending an Accept-Encoding: header, and in turn, does not decompress received contents automatically.
+         *
+         * @example
+         * auto req = web::WebRequest()
+         *  .acceptEncoding("gzip, deflate")
+         *  .get(url);
+         *
+         * @param encodingType Target response encoding type. An empty string ("") will use all built-in supported encodings.
+         * @return WebRequest&
+         */
+        WebRequest& acceptEncoding(std::string_view encodingType);
+
+        /**
+         * Sets the maximum amount of seconds to allow the entire transfer operation to take.
+         * The default timeout is 0, which means the request never times out during transfer.
+         *
+         * @param time
+         * @return WebRequest&
+         */
+        WebRequest& timeout(std::chrono::seconds time);
+
+        /**
+         * Sets the target byte range to request.
+         * Defaults to receiving the full request.
+         *
+         * @param byteRange a pair of ints, first value is what byte to start from, second value is the last byte to get (both inclusive)
+         * @return WebRequest&
+         */
+        WebRequest& downloadRange(std::pair<std::uint64_t, std::uint64_t> byteRange);
+
+        /**
+         * Enable or disables peer verification in SSL handshake.
+         * The default is true.
+         *
+         * @param enabled
+         * @return WebRequest&
+         */
+        WebRequest& certVerification(bool enabled);
+
+        /**
+         * Enables or disabled getting the body of a request. For HTTP(S), this does a HEAD request.
+         * For most other protocols it means just not asking to transfer the body data.
+         * The default is true.
+         *
+         * @param enabled
+         * @return WebRequest&
+         */
+        WebRequest& transferBody(bool enabled);
+
+        /**
+         * Follow HTTP 3xx redirects.
+         * The default is true.
+         *
+         * @param enabled
+         * @return WebRequest&
+         */
+        WebRequest& followRedirects(bool enabled);
+
+        /**
+         * Enables or disables ignoring the content length header.
+         * The default is false.
+         *
+         * @param enabled
+         * @return WebRequest&
+         */
+        WebRequest& ignoreContentLength(bool enabled);
+
+        /**
+         * Sets the Certificate Authority (CA) bundle content.
+         * Defaults to sending the Geode CA bundle, found here: https://github.com/geode-sdk/net_libs/blob/main/ca_bundle.h
+         *
+         * @param content
+         * @return WebRequest&
+         */
+        WebRequest& CABundleContent(std::string_view content);
+
+        /**
+         * Sets the request's proxy.
+         * Defaults to not using a proxy.
+         *
+         * @param proxyOpts
+         * @return WebRequest&
+         */
+        WebRequest& proxyOpts(ProxyOpts const& proxyOpts);
+
+        /**
+         * Sets the request's HTTP version.
+         * The default is `HttpVersion::DEFAULT`.
+         *
+         * @param httpVersion
+         * @return WebRequest&
+         */
+        WebRequest& version(HttpVersion httpVersion);
+
+        /**
+         * Sets the body of the request to a byte vector.
+         *
+         * @param raw The raw bytes to set as the body.
+         * @return WebRequest&
+         */
+        WebRequest& body(ByteVector raw);
+        /**
+         * Sets the body of the request to a string.
+         *
+         * @param str The string to set as the body.
+         * @return WebRequest&
+         */
+        WebRequest& bodyString(std::string_view str);
+        /**
+         * Sets the body of the request to a json object.
+         *
+         * @param json
+         * @return WebRequest&
+         */
+        WebRequest& bodyJSON(matjson::Value const& json);
+        /**
+         * Sets the body of the request to a multipart form.
+         *
+         * @param form The multipart form to set as the body.
+         * @return WebRequest&
+         */
+        WebRequest& bodyMultipart(MultipartForm const& form);
+
+        /**
+         * Gets the unique request ID
+         *
+         * @return size_t
+         */
+        size_t getID() const;
+
+
+        /**
+         * Gets the request method as a string
+         *
+         * @return std::string
+         */
+        std::string getMethod() const;
+
+        /**
+         * Gets the request URL
+         *
+         * @return std::string
+         */
+        std::string getUrl() const;
+
+        /**
+         * Gets the request headers
+         *
+         * @return std::unordered_map<std::string, std::vector<std::string>>
+         */
+        std::unordered_map<std::string, std::vector<std::string>> getHeaders() const;
+
+        /**
+         * Gets the parameters inside the URL
+         *
+         * @return std::unordered_map<std::string, std::string>
+         */
+        std::unordered_map<std::string, std::string> getUrlParams() const;
+
+        /**
+         * Gets the post body stream
+         *
+         * @return std::optional<ByteVector>
+         */
+        std::optional<ByteVector> getBody() const;
+
+        /**
+         * Gets the request timeout in seconds
+         *
+         * @return std::optional<std::chrono::seconds>
+         */
+        std::optional<std::chrono::seconds> getTimeout() const;
+
+        /**
+         * Gets HTTP versions applied to the request
+         *
+         * @return HttpVersion
+         */
+        HttpVersion getHttpVersion() const;
+    };
 }

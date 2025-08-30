@@ -26,6 +26,8 @@ THE SOFTWARE.
 #ifndef __CC_PLATFORM_CONFIG_H__
 #define __CC_PLATFORM_CONFIG_H__
 
+#include <Geode/platform/cplatform.h>
+
 /**
 Config of cocos2d-x project, per target platform.
 */
@@ -51,7 +53,6 @@ Config of cocos2d-x project, per target platform.
 #define CC_PLATFORM_WP8               13
 
 // Determine target platform by compile environment macro.
-#define CC_TARGET_PLATFORM             CC_PLATFORM_WIN32
 
 // mac
 #if defined(CC_TARGET_OS_MAC)
@@ -84,7 +85,7 @@ Config of cocos2d-x project, per target platform.
 #endif
 
 // win32
-#if defined(WIN32) && defined(_WINDOWS)
+#if defined(CC_TARGET_OS_WIN32)
     #undef  CC_TARGET_PLATFORM
     #define CC_TARGET_PLATFORM         CC_PLATFORM_WIN32
 #endif
@@ -138,10 +139,10 @@ Config of cocos2d-x project, per target platform.
 // check user set platform
 #if ! CC_TARGET_PLATFORM
     #error  "Cannot recognize the target platform; are you targeting an unsupported platform?"
-#endif 
+#endif
 
 #if (CC_TARGET_PLATFORM == CC_PLATFORM_WIN32)
-#pragma warning (disable:4127)  
+#pragma warning (disable:4127)
 #endif  // CC_PLATFORM_WIN32
 
 #endif  // __CC_PLATFORM_CONFIG_H__

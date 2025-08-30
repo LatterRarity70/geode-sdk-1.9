@@ -88,13 +88,13 @@ namespace geode::modifier {
     using RemoveClassType = typename RemoveClass<Func>::type;
 
     /**
-     * A helper struct that allows for checking if two function pointers 
+     * A helper struct that allows for checking if two function pointers
      * are the same or different.
      */
     struct Unique {
         using ValueType = void(*)(...);
         static constexpr auto nvalue = static_cast<void(*)(...)>(nullptr);
-        
+
         template <auto Value>
         struct Impl {
             static void unique(...) {};
@@ -110,9 +110,9 @@ namespace geode::modifier {
         template <auto Value>
         static constexpr auto value = Impl<Value>::value;
 
-        
+
         /**
-         * Checks if two function pointers are the same. If their types are 
+         * Checks if two function pointers are the same. If their types are
          * different, returns false.
          */
         template <auto p1, auto p2>
@@ -126,7 +126,7 @@ namespace geode::modifier {
         }
 
         /**
-         * Checks if two function pointers are different. If their types are 
+         * Checks if two function pointers are different. If their types are
          * different, returns false.
          */
         template <auto p1, auto p2>
@@ -141,7 +141,7 @@ namespace geode::modifier {
     };
 
     /**
-     * Helps resolving an overloaded function pointer to a specific function using 
+     * Helps resolving an overloaded function pointer to a specific function using
      * its parameter types as the hint.
      */
     template <class... Params>
@@ -167,7 +167,30 @@ namespace geode::modifier {
     };
 
     /**
-     * A specialization for giving the variadic types as a single type with the 
+     * Gets the return type of a given resolved function pointer.
+     */
+    template <class Func>
+    struct ReturnType {
+        using type = void;
+    };
+
+    template <class Return, class... Params>
+    struct ReturnType<Return(*)(Params...)> {
+        using type = Return;
+    };
+
+    template <class Return, class Class, class... Params>
+    struct ReturnType<Return(Class::*)(Params...)> {
+        using type = Return;
+    };
+
+    template <class Return, class Class, class... Params>
+    struct ReturnType<Return(Class::*)(Params...) const> {
+        using type = Return;
+    };
+
+    /**
+     * A specialization for giving the variadic types as a single type with the
      * function type. The return type is ignored.
      */
     template <class... Params>

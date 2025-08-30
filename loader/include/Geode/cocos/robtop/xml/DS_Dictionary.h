@@ -13,14 +13,14 @@ public:
 
 public:
 	gd::string cleanStringWhiteSpace(const gd::string&);
-	void split(const gd::string&, char*, const gd::vector<gd::string>&);
+	void split(gd::string const&, char const*, gd::vector<gd::string>&);
 	bool splitWithForm(const gd::string&, gd::vector<gd::string>&);
 	bool rectFromString(const gd::string&, cocos2d::CCRect&);
 	bool vec2FromString(const gd::string&, cocos2d::CCPoint&);
 
 public:
 	DS_Dictionary();
-	~DS_Dictionary();
+	~DS_Dictionary() {}
     GEODE_CUSTOM_CONSTRUCTOR_BEGIN(DS_Dictionary)
 
 	static void copyFile(const char*, const char*);
@@ -80,14 +80,14 @@ public:
 	void setRectArrayForKey(const char*, const gd::vector<cocos2d::CCRect>&);
 	void setRectArrayForKey(const char*, const gd::vector<cocos2d::CCRect>&, bool);
 	void setArrayForKey(const char*, cocos2d::CCArray*);
-	void setBoolMapForKey(const char*, const gd::map<gd::string, bool>&);
+	void setBoolMapForKey(const char*, gd::map<gd::string, bool>&);
 	void setSubDictForKey(const char*);
 	void setSubDictForKey(const char*, bool, bool);
 	void setDictForKey(const char*, cocos2d::CCDictionary*);
 	void setObjectForKey(const char*, cocos2d::CCObject*);
 
-	void addBoolValuesToMapForKey(const gd::map<gd::string, bool>&, const char*, bool);
-	void addBoolValuesToMapForKeySpecial(const gd::map<gd::string, bool>&, const char*, bool);
+	void addBoolValuesToMapForKey(gd::map<gd::string, bool>&, const char*, bool);
+	void addBoolValuesToMapForKeySpecial(gd::map<gd::string, bool>&, const char*, bool);
 
 	void checkCompatibility();
 };

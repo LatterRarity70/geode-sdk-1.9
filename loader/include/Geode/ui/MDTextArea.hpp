@@ -24,9 +24,9 @@ namespace geode {
      *  - Bold & italic
      *  - Horizontal rules
      *  - Lists
-     * 
+     *
      * Note that links also have some special protocols.
-     * Use `user:<id>` or `user:<name>` to link to a GD
+     * Use `user:<accountID>` to link to a GD
      * account; `level:<id>` to link to a GD level and
      * `mod:<id>` to link to another Geode mod.
      */
@@ -34,6 +34,13 @@ namespace geode {
         public cocos2d::CCLayer,
         public cocos2d::CCLabelProtocol,
         public FLAlertLayerProtocol {
+    private:
+        /**
+         * Converts single newlines to soft linebreaks.
+         */
+        static std::string translateNewlines(std::string const& str);
+
+    // TODO in v5: this should be pimpl (or final)
     protected:
         std::string m_text;
         cocos2d::CCSize m_size;
@@ -48,6 +55,8 @@ namespace geode {
 
         void onLink(CCObject*);
         void onGDProfile(CCObject*);
+        void onGDLevel(CCObject*);
+        void onGeodeMod(CCObject*);
         void FLAlert_Clicked(FLAlertLayer*, bool btn) override;
 
         friend struct ::MDParser;
@@ -61,6 +70,16 @@ namespace geode {
          * @param size Size of the textarea
          */
         static MDTextArea* create(std::string const& str, cocos2d::CCSize const& size);
+
+        /**
+         * Create a markdown text area. See class
+         * documentation for details on supported
+         * features & notes.
+         * @param str String to render
+         * @param size Size of the textarea
+         * @param compatibilityMode Enables functionality that may be useful for wrapping a generic alert, such as newline support
+         */
+        static MDTextArea* create(std::string const& str, cocos2d::CCSize const& size, bool compatibilityMode);
 
         /**
          * Update the label's content; call

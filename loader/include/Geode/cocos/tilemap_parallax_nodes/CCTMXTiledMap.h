@@ -120,6 +120,7 @@ class CC_DLL CCTMXTiledMap : public CCNode
     /** properties */
     CC_PROPERTY(CCDictionary*, m_pProperties, Properties);
 public:
+    GEODE_CUSTOM_CONSTRUCTOR_COCOS(CCTMXTiledMap, CCNode)
     /**
      * @js ctor
      */
@@ -147,12 +148,12 @@ public:
      */
     CCTMXLayer* layerNamed(const char *layerName);
 
-    /** return the TMXObjectGroup for the specific group 
+    /** return the TMXObjectGroup for the specific group
      *  @js getObjectGroup
      */
     CCTMXObjectGroup* objectGroupNamed(const char *groupName);
 
-    /** return the value for the specific property name 
+    /** return the value for the specific property name
      *  @js getProperty
      */
     CCString *propertyNamed(const char *propertyName);
@@ -164,7 +165,7 @@ private:
     CCTMXLayer * parseLayer(CCTMXLayerInfo *layerInfo, CCTMXMapInfo *mapInfo);
     CCTMXTilesetInfo * tilesetForLayer(CCTMXLayerInfo *layerInfo, CCTMXMapInfo *mapInfo);
     void buildWithMapInfo(CCTMXMapInfo* mapInfo);
-protected:
+public:
     //! tile properties
     CCDictionary* m_pTileProperties;
 

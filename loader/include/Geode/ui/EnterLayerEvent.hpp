@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../loader/Event.hpp"
+#include <optional>
 
 namespace cocos2d {
     class CCNode;
@@ -14,7 +15,7 @@ namespace geode {
     struct GEODE_DLL AEnterLayerEvent : public Event {
         const std::string layerID;
         cocos2d::CCNode* layer;
-    
+
         AEnterLayerEvent(
             std::string const& layerID,
             cocos2d::CCNode* layer
@@ -24,12 +25,12 @@ namespace geode {
     class GEODE_DLL AEnterLayerFilter : public EventFilter<AEnterLayerEvent> {
 	public:
 		using Callback = void(AEnterLayerEvent*);
-    
+
     protected:
 		std::optional<std::string> m_targetID;
-	
+
 	public:
-        ListenerResult handle(utils::MiniFunction<Callback> fn, AEnterLayerEvent* event);
+        ListenerResult handle(std::function<Callback> fn, AEnterLayerEvent* event);
 
 		AEnterLayerFilter(
 			std::optional<std::string> const& id
@@ -38,7 +39,7 @@ namespace geode {
     };
 
     template<InheritsCCNode T>
-    class EnterLayerEvent : public AEnterLayerEvent {
+    class EnterLayerEvent final : public AEnterLayerEvent {
     public:
         EnterLayerEvent(
             std::string const& layerID,
@@ -53,16 +54,16 @@ namespace geode {
     template<class T, class N>
     concept InheritsEnterLayer = std::is_base_of_v<EnterLayerEvent<N>, T>;
 
-    template<class N, InheritsEnterLayer<N> T>
-	class EnterLayerFilter : public EventFilter<EnterLayerEvent<N>> {
+    template<class N, InheritsEnterLayer<N> T = EnterLayerEvent<N>>
+	class EnterLayerFilter final : public EventFilter<EnterLayerEvent<N>> {
 	public:
 		using Callback = void(T*);
-        
+
 	protected:
 		std::optional<std::string> m_targetID;
-	
+
 	public:
-        ListenerResult handle(utils::MiniFunction<Callback> fn, EnterLayerEvent<N>* event) {
+        ListenerResult handle(std::function<Callback> fn, EnterLayerEvent<N>* event) {
             if (m_targetID == event->getID()) {
                 fn(static_cast<T*>(event));
             }

@@ -1,7 +1,5 @@
 #include <FileWatcher.hpp>
 
-#ifdef GEODE_IS_IOS
-
 #import <UIKit/UIKit.h>
 #include <fcntl.h>
 #include <iostream>
@@ -10,9 +8,9 @@
 // FILE_NOTIFY_CHANGE_ATTRIBUTES | FILE_NOTIFY_CHANGE_SIZE;
 
 FileWatcher::FileWatcher(
-    ghc::filesystem::path const& file, FileWatchCallback callback, ErrorCallback error
+    std::filesystem::path const& file, FileWatchCallback callback, ErrorCallback error
 ) {
-    m_filemode = ghc::filesystem::is_regular_file(file);
+    m_filemode = std::filesystem::is_regular_file(file);
 
     m_platformHandle = NULL;
     m_file = file;
@@ -52,5 +50,3 @@ void FileWatcher::watch() {
 bool FileWatcher::watching() const {
     return m_platformHandle != NULL;
 }
-
-#endif

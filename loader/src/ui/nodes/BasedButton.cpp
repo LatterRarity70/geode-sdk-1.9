@@ -1,4 +1,5 @@
 #include <Geode/ui/BasedButton.hpp>
+#include <Geode/binding/CCMenuItemSpriteExtra.hpp>
 
 using namespace geode::prelude;
 
@@ -9,15 +10,15 @@ TabButton* TabButton::create(
     auto ret = new TabButton();
     auto sprOff = TabButtonSprite::create(text, unselected);
     auto sprOn = TabButtonSprite::create(text, selected);
-    if (ret && ret->init(sprOff, sprOn, target, callback)) {
-        ret->m_offButton->m_colorDip = .3f;
+    if (ret->init(sprOff, sprOn, target, callback)) {
+        // ret->m_offButton->m_colorDip = .3f;
         ret->m_offButton->m_colorEnabled = true;
         ret->m_offButton->m_scaleMultiplier = 1.f;
         ret->m_onButton->setEnabled(false);
         ret->autorelease();
         return ret;
     }
-    CC_SAFE_DELETE(ret);
+    delete ret;
     return nullptr;
 }
 

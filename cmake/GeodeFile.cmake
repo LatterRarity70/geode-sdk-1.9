@@ -1,7 +1,7 @@
 set(GEODE_CLI_MINIMUM_VERSION 1.0.5)
 
 # Find Geode CLI
-if (NOT DEFINED GEODE_CLI)
+if (NOT DEFINED GEODE_CLI OR GEODE_CLI STREQUAL "GEODE_CLI-NOTFOUND")
     find_program(GEODE_CLI NAMES geode.exe geode-cli.exe geode geode-cli PATHS ${CLI_PATH})
 endif()
 
@@ -13,6 +13,7 @@ else()
     execute_process(
         COMMAND ${GEODE_CLI} --version
         OUTPUT_VARIABLE GEODE_CLI_VERSION
+        COMMAND_ERROR_IS_FATAL ANY
     )
     # Remove trailing newline
     string(STRIP ${GEODE_CLI_VERSION} GEODE_CLI_VERSION)
@@ -51,6 +52,17 @@ function(setup_geode_mod proname)
     # Link Geode to the mod
     target_link_libraries(${proname} geode-sdk)
 
+    if (ANDROID)
+        if (CMAKE_BUILD_TYPE STREQUAL "Release")
+            add_custom_command(
+                TARGET "${proname}" POST_BUILD
+                DEPENDS "${proname}"
+                COMMAND $<$<CONFIG:release>:${CMAKE_STRIP}>
+                ARGS -S $<TARGET_FILE:${proname}>
+            )
+        endif()
+    endif()
+
     if (GEODE_DISABLE_CLI_CALLS)
         message("Skipping setting up geode mod ${proname}")
         return()
@@ -59,7 +71,7 @@ function(setup_geode_mod proname)
     if(GEODE_CLI STREQUAL "GEODE_CLI-NOTFOUND")
         message(FATAL_ERROR
             "setup_geode_mod called, but Geode CLI was not found - "
-            "Please install CLI: https://docs.geode-sdk.org/info/installcli/"
+            "Please install CLI: https://docs.geode-sdk.org/"
         )
         return()
     endif()
@@ -74,8 +86,22 @@ function(setup_geode_mod proname)
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/mod.json" MOD_JSON)
     string(JSON MOD_ID GET "${MOD_JSON}" "id")
     string(JSON MOD_VERSION GET "${MOD_JSON}" "version")
+    string(JSON TARGET_GEODE_VERSION GET "${MOD_JSON}" "geode")
     string(JSON MOD_HAS_API ERROR_VARIABLE MOD_DOESNT_HAVE_API GET "${MOD_JSON}" "api")
     string(JSON MOD_HAS_DEPS ERROR_VARIABLE MOD_DOESNT_HAVE_DEPS GET "${MOD_JSON}" "dependencies")
+
+    string(REGEX REPLACE "([0-9]+\\.[0-9]+)\\.[0-9]+" "\\1" TARGET_GEODE_VERSION_SHORT ${TARGET_GEODE_VERSION})
+    string(REGEX REPLACE "([0-9]+\\.[0-9]+)\\.[0-9]+" "\\1" GEODE_VERSION_SHORT ${GEODE_VERSION_FULL})
+
+    if ("${TARGET_GEODE_VERSION_SHORT}" STREQUAL "${GEODE_VERSION_SHORT}")
+        message(STATUS "Mod ${MOD_ID} is compiling for Geode version ${GEODE_VERSION_FULL}")
+    else()
+        message(FATAL_ERROR
+            "Mod ${MOD_ID} is made for Geode version ${TARGET_GEODE_VERSION} but you have ${GEODE_VERSION_FULL} SDK installed. Please change the Geode version in your mod.json. "
+        )
+    endif()
+
+    target_compile_definitions(${proname} PRIVATE GEODE_MOD_ID="${MOD_ID}")
 
     # Add this mod to the list of known externals mods
     list(APPEND GEODE_MODS_BEING_BUILT "${MOD_ID}:${MOD_VERSION}")
@@ -96,16 +122,27 @@ function(setup_geode_mod proname)
     endif()
 
     # Check dependencies using CLI
-    if (${GEODE_CLI_VERSION} VERSION_GREATER_EQUAL "2.0.0")
+    if (${GEODE_CLI_VERSION} VERSION_GREATER_EQUAL "3.2.0")
+        execute_process(
+            COMMAND ${GEODE_CLI} project check ${CMAKE_CURRENT_BINARY_DIR}
+                --externals ${GEODE_MODS_BEING_BUILT} ${DONT_UPDATE_INDEX_ARG}
+                --platform ${GEODE_TARGET_PLATFORM_SHORT}
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            COMMAND_ERROR_IS_FATAL ANY
+        )
+    elseif (${GEODE_CLI_VERSION} VERSION_GREATER_EQUAL "2.0.0")
+        message(WARNING "If you use platform-specific dependencies, upgrade Geode CLI to version 3.2.0 or greater!")
         execute_process(
             COMMAND ${GEODE_CLI} project check ${CMAKE_CURRENT_BINARY_DIR}
                 --externals ${GEODE_MODS_BEING_BUILT} ${DONT_UPDATE_INDEX_ARG}
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            COMMAND_ERROR_IS_FATAL ANY
         )
     elseif (${GEODE_CLI_VERSION} VERSION_GREATER_EQUAL "1.4.0")
         execute_process(
             COMMAND ${GEODE_CLI} package setup ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}
                 --externals ${GEODE_MODS_BEING_BUILT}
+            COMMAND_ERROR_IS_FATAL ANY
         )
     elseif (MOD_HAS_DEPS)
         message(FATAL_ERROR
@@ -130,9 +167,28 @@ function(setup_geode_mod proname)
         set(HAS_HEADERS Off)
     endif()
 
-    # todo: figure out how to either not make cmake shit itself and print out --binary path/to/dll "" or 
-    # make cli not shit itself when it sees that
-    if (HAS_HEADERS)
+    if (GEODE_BUNDLE_PDB AND WIN32 AND (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo"))
+        if (HAS_HEADERS)
+            add_custom_target(${proname}_PACKAGE ALL
+                DEPENDS ${proname} ${CMAKE_CURRENT_SOURCE_DIR}/mod.json
+                COMMAND ${GEODE_CLI} package new ${CMAKE_CURRENT_SOURCE_DIR} 
+                    --binary $<TARGET_FILE:${proname}> $<TARGET_LINKER_FILE:${proname}> $<TARGET_PDB_FILE:${proname}>
+                    --output ${CMAKE_CURRENT_BINARY_DIR}/${MOD_ID}.geode
+                    ${INSTALL_ARG} ${PDB_ARG}
+                VERBATIM USES_TERMINAL
+            )
+        else()
+            add_custom_target(${proname}_PACKAGE ALL
+                DEPENDS ${proname} ${CMAKE_CURRENT_SOURCE_DIR}/mod.json
+                COMMAND ${GEODE_CLI} package new ${CMAKE_CURRENT_SOURCE_DIR} 
+                    --binary $<TARGET_FILE:${proname}> $<TARGET_PDB_FILE:${proname}>
+                    --output ${CMAKE_CURRENT_BINARY_DIR}/${MOD_ID}.geode
+                    ${INSTALL_ARG} ${PDB_ARG}
+                VERBATIM USES_TERMINAL
+            )
+        endif()
+    elseif (HAS_HEADERS AND WIN32)
+        # this adds the .lib file on windows, which is needed for linking with the headers
         add_custom_target(${proname}_PACKAGE ALL
             DEPENDS ${proname} ${CMAKE_CURRENT_SOURCE_DIR}/mod.json
             COMMAND ${GEODE_CLI} package new ${CMAKE_CURRENT_SOURCE_DIR} 
@@ -182,11 +238,23 @@ function(setup_geode_mod proname)
                 endif()
 
                 # Otherwise add all .libs or whatever the platform's library type is
-                if (WIN32)
+                if (WIN32 OR LINUX)
                     file(GLOB libs ${dir}/*.lib)
+                    list(APPEND libs_to_link ${libs})
+                elseif ("${CMAKE_SYSTEM_NAME}" STREQUAL "iOS")
+                    file(GLOB libs ${dir}/*.ios.dylib)
                     list(APPEND libs_to_link ${libs})
                 elseif (APPLE)
                     file(GLOB libs ${dir}/*.dylib)
+                    file(GLOB ios_libs ${dir}/*.ios.dylib)
+                    list(REMOVE_ITEM libs ${ios_libs})
+                    list(APPEND libs_to_link ${libs})
+                elseif (ANDROID)
+                    if (CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
+                        file(GLOB libs ${dir}/*.android64.so)
+                    else()
+                        file(GLOB libs ${dir}/*.android32.so)
+                    endif()
                     list(APPEND libs_to_link ${libs})
                 else()
                     message(FATAL_ERROR "Library extension not defined on this platform")
@@ -203,8 +271,10 @@ function(setup_geode_mod proname)
 
     # Add package target + make output name the mod id
     set_target_properties(${proname} PROPERTIES PREFIX "")
+    if (DEFINED GEODE_MOD_BINARY_SUFFIX)
+        set_target_properties(${proname} PROPERTIES SUFFIX ${GEODE_MOD_BINARY_SUFFIX})
+    endif()
     set_target_properties(${proname} PROPERTIES OUTPUT_NAME ${MOD_ID})
-
 endfunction()
 
 function(create_geode_file proname)
@@ -274,6 +344,7 @@ function(package_geode_resources_now proname src dest header_dest)
     execute_process(
         COMMAND ${GEODE_CLI} package resources ${src} ${dest} --shut-up
         RESULT_VARIABLE GEODE_PACKAGE_RES
+        COMMAND_ERROR_IS_FATAL ANY
     )
 
     if (NOT GEODE_PACKAGE_RES EQUAL "0")
@@ -294,19 +365,41 @@ function(package_geode_resources_now proname src dest header_dest)
         # "LOADER_RESOURCE_FILES {\n"
     )
 
-    list(APPEND HASHED_EXTENSIONS ".png")
-    list(APPEND HASHED_EXTENSIONS ".mp3")
-    list(APPEND HASHED_EXTENSIONS ".ogg")
-    list(APPEND HASHED_EXTENSIONS ".md")
+    # yeah don't think we need to check too many stuff
+    # list(APPEND HASHED_EXTENSIONS ".png")
+    # list(APPEND HASHED_EXTENSIONS ".mp3")
+    # list(APPEND HASHED_EXTENSIONS ".ogg")
+    list(APPEND HASHED_TEXT_EXTENSIONS ".md")
 
     foreach(file ${RESOURCE_FILES})
         cmake_path(GET file FILENAME FILE_NAME)
         get_filename_component(FILE_EXTENSION ${file} EXT)
+
         list(FIND HASHED_EXTENSIONS "${FILE_EXTENSION}" FILE_SHOULD_HASH)
 
         if (NOT FILE_NAME STREQUAL ".geode_cache" AND NOT FILE_SHOULD_HASH EQUAL -1)
             
             file(SHA256 ${file} COMPUTED_HASH)
+            file(SIZE ${file} FILE_SIZE)
+            message(STATUS "Hashed ${file} to ${COMPUTED_HASH} (${FILE_SIZE} bytes)")
+            list(APPEND HEADER_FILE "\t{ \"${FILE_NAME}\", \"${COMPUTED_HASH}\" },\n")
+
+            # list(APPEND HEADER_FILE "\t\"${FILE_NAME}\",\n")
+
+        endif()
+
+        list(FIND HASHED_TEXT_EXTENSIONS "${FILE_EXTENSION}" FILE_SHOULD_TEXT_HASH)
+
+        if (NOT FILE_NAME STREQUAL ".geode_cache" AND NOT FILE_SHOULD_TEXT_HASH EQUAL -1)
+            
+            # create list of lines form the contens of a file
+            file(STRINGS ${file} LINES)
+            list(JOIN LINES "" JOINED)
+            # compute hash of the lines
+            string(LENGTH "${JOINED}" FILE_SIZE)
+            string(SHA256 COMPUTED_HASH "${JOINED}")
+            
+            message(STATUS "Hashed ${file} to ${COMPUTED_HASH} (${FILE_SIZE} bytes)")
             list(APPEND HEADER_FILE "\t{ \"${FILE_NAME}\", \"${COMPUTED_HASH}\" },\n")
 
             # list(APPEND HEADER_FILE "\t\"${FILE_NAME}\",\n")

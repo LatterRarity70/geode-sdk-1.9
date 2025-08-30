@@ -1,3 +1,5 @@
+#include <utility>
+
 #include "LoaderImpl.hpp"
 
 using namespace geode::prelude;
@@ -7,31 +9,19 @@ Loader::Loader() : m_impl(new Impl) {}
 Loader::~Loader() {}
 
 Loader* Loader::get() {
-    static auto g_geode = new Loader;
+    static auto g_geode = new Loader();
     return g_geode;
 }
 
-void Loader::createDirectories() {
-    return m_impl->createDirectories();
+bool Loader::isForwardCompatMode() {
+    return m_impl->isForwardCompatMode();
 }
 
-void Loader::updateModResources(Mod* mod) {
-    return m_impl->updateModResources(mod);
-}
-
-void Loader::addSearchPaths() {
-    return m_impl->addSearchPaths();
-}
-
-Result<Mod*> Loader::loadModFromInfo(ModInfo const& info) {
-    return m_impl->loadModFromInfo(info);
-}
-
-Result<> Loader::saveData() {
+void Loader::saveData() {
     return m_impl->saveData();
 }
 
-Result<> Loader::loadData() {
+void Loader::loadData() {
     return m_impl->loadData();
 }
 
@@ -51,16 +41,8 @@ bool Loader::isModVersionSupported(VersionInfo const& version) {
     return m_impl->isModVersionSupported(version);
 }
 
-Result<Mod*> Loader::loadModFromFile(ghc::filesystem::path const& file) {
-    return m_impl->loadModFromFile(file);
-}
-
-void Loader::loadModsFromDirectory(ghc::filesystem::path const& dir, bool recursive) {
-    return m_impl->loadModsFromDirectory(dir, recursive);
-}
-
-void Loader::refreshModsList() {
-    return m_impl->refreshModsList();
+Loader::LoadingState Loader::getLoadingState() {
+    return m_impl->m_loadingState;
 }
 
 bool Loader::isModInstalled(std::string const& id) const {
@@ -83,50 +65,65 @@ std::vector<Mod*> Loader::getAllMods() {
     return m_impl->getAllMods();
 }
 
-Mod* Loader::getModImpl() {
-    return m_impl->getModImpl();
+std::vector<LoadProblem> Loader::getAllProblems() const {
+    return m_impl->getProblems();
+}
+std::vector<LoadProblem> Loader::getLoadProblems() const {
+    std::vector<LoadProblem> result;
+    for (auto problem : this->getAllProblems()) {
+        if (problem.isProblem()) {
+            result.push_back(problem);
+        }
+    }
+    return result;
+}
+std::vector<LoadProblem> Loader::getOutdated() const {
+    std::vector<LoadProblem> result;
+    for (auto problem : this->getAllProblems()) {
+        if (problem.isOutdated()) {
+            result.push_back(problem);
+        }
+    }
+    return result;
+}
+std::vector<LoadProblem> Loader::getRecommendations() const {
+    std::vector<LoadProblem> result;
+    for (auto problem : this->getAllProblems()) {
+        if (problem.type == LoadProblem::Type::Recommendation) {
+            result.push_back(problem);
+        }
+    }
+    return result;
 }
 
-void Loader::updateAllDependencies() {
-    return m_impl->updateAllDependencies();
+void Loader::queueInMainThread(ScheduledFunction&& func) {
+    return m_impl->queueInMainThread(std::forward<ScheduledFunction>(func));
 }
 
-std::vector<InvalidGeodeFile> Loader::getFailedMods() const {
-    return m_impl->getFailedMods();
-}
-
-void Loader::updateResources() {
-    return m_impl->updateResources();
-}
-
-void Loader::updateResources(bool forceReload) {
-    return m_impl->updateResources(forceReload);
-}
-
-void Loader::queueInGDThread(ScheduledFunction func) {
-    return m_impl->queueInGDThread(func);
-}
-
-void Loader::waitForModsToBeLoaded() {
-    return m_impl->waitForModsToBeLoaded();
-}
-
-void Loader::openPlatformConsole() {
-    return m_impl->openPlatformConsole();
-}
-
-void Loader::closePlatformConsole() {
-    return m_impl->closePlatformConsole();
-}
-
-bool Loader::didLastLaunchCrash() const {
-    return m_impl->didLastLaunchCrash();
+std::string Loader::getGameVersion() {
+    return m_impl->getGameVersion();
 }
 
 Mod* Loader::takeNextMod() {
     return m_impl->takeNextMod();
 }
 
-bool Loader::userTriedToLoadDLLs() const {
-    return m_impl->userTriedToLoadDLLs();
+std::vector<std::string> Loader::getLaunchArgumentNames() const {
+    return m_impl->getLaunchArgumentNames();
+}
+
+bool Loader::hasLaunchArgument(std::string_view name) const {
+    return m_impl->hasLaunchArgument(name);
+}
+
+std::optional<std::string> Loader::getLaunchArgument(std::string_view name) const {
+    return m_impl->getLaunchArgument(name);
+}
+
+bool Loader::getLaunchFlag(std::string_view name) const {
+    return m_impl->getLaunchFlag(name);
+}
+
+bool Loader::isPatchless() const {
+    return m_impl->isPatchless();
 }

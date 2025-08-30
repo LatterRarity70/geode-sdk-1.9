@@ -1,28 +1,51 @@
 #include <Geode/loader/Hook.hpp>
-#include <json.hpp>
+#include "PatchImpl.hpp"
 
 using namespace geode::prelude;
 
-bool Patch::apply() {
-    return bool(tulip::hook::writeMemory(m_address, m_patch.data(), m_patch.size()));
+Patch::Patch(std::shared_ptr<Impl>&& impl) : m_impl(std::move(impl)) { m_impl->m_self = this; }
+Patch::~Patch() = default;
+
+std::shared_ptr<Patch> Patch::create(void* address, const ByteVector& patch) {
+    return Impl::create(address, patch);
 }
 
-bool Patch::restore() {
-    return bool(tulip::hook::writeMemory(m_address, m_original.data(), m_original.size()));
+Mod* Patch::getOwner() const {
+    return m_impl->getOwner();
 }
 
-template <>
-struct json::Serialize<ByteVector> {
-    static json::Value to_json(ByteVector const& bytes) {
-        return json::Array(bytes.begin(), bytes.end());
-    }
-};
+bool Patch::isEnabled() const {
+    return m_impl->isEnabled();
+}
 
-json::Value Patch::getRuntimeInfo() const {
-    auto json = json::Object();
-    json["address"] = std::to_string(reinterpret_cast<uintptr_t>(m_address));
-    json["original"] = m_original;
-    json["patch"] = m_patch;
-    json["applied"] = m_applied;
-    return json;
+Result<> Patch::enable() {
+    return m_impl->enable();
+}
+
+Result<> Patch::disable() {
+    return m_impl->disable();
+}
+
+bool Patch::getAutoEnable() const {
+    return m_impl->getAutoEnable();
+}
+
+void Patch::setAutoEnable(bool autoEnable) {
+    return m_impl->setAutoEnable(autoEnable);
+}
+
+ByteVector const& Patch::getBytes() const {
+    return m_impl->getBytes();
+}
+
+Result<> Patch::updateBytes(const ByteVector& bytes) {
+    return m_impl->updateBytes(bytes);
+}
+
+uintptr_t Patch::getAddress() const {
+    return m_impl->getAddress();
+}
+
+matjson::Value Patch::getRuntimeInfo() const {
+    return m_impl->getRuntimeInfo();
 }

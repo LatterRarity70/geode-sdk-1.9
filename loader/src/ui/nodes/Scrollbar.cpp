@@ -1,12 +1,17 @@
 #include <Geode/ui/Scrollbar.hpp>
 #include <Geode/utils/cocos.hpp>
+#include <Geode/binding/CCContentLayer.hpp>
+#include <Geode/loader/Mod.hpp>
 
 using namespace geode::prelude;
 
 bool Scrollbar::ccTouchBegan(CCTouch* touch, CCEvent* event) {
     // hitbox
-    auto rect = this->boundingBox();
-    if (!m_target || !rect.containsPoint(touch->getLocation())) return false;
+    auto const size = this->getContentSize();
+    auto const pos = this->convertToNodeSpace(touch->getLocation());
+    auto const rect = CCRect{0, 0, size.width, size.height};
+
+    if (!m_target || !rect.containsPoint(pos)) return false;
 
     // trigger scrollbar thumb move
     this->ccTouchMoved(touch, event);
@@ -177,7 +182,7 @@ bool Scrollbar::init(CCScrollLayerExt* target) {
     this->addChild(m_track);
     this->addChild(m_thumb);
 
-    this->registerWithTouchDispatcher();
+    this->setTouchEnabled(true);
 
     return true;
 }
@@ -185,11 +190,11 @@ bool Scrollbar::init(CCScrollLayerExt* target) {
 Scrollbar* Scrollbar::create(CCScrollLayerExt* target) {
     auto ret = new Scrollbar;
 
-    if (ret && ret->init(target)) {
+    if (ret->init(target)) {
         ret->autorelease();
         return ret;
     }
 
-    CC_SAFE_DELETE(ret);
+    delete ret;
     return nullptr;
 }

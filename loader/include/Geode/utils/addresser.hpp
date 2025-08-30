@@ -28,6 +28,18 @@ namespace geode::addresser {
     template <class Function, class Class>
     Class rthunkAdjust(Function func, Class self);
 
+    template <class Function>
+    intptr_t getVirtualOffset(Function func);
+
+    template <class Function>
+    intptr_t getThunkOffset(Function func);
+
+
+    template <class Class>
+    concept HasZeroConstructor = requires {
+        new Class(ZeroConstructor);
+    };
+
     class GEODE_DLL Addresser final {
         template <char C>
         struct SingleInheritance {
@@ -52,7 +64,7 @@ namespace geode::addresser {
         }
 
         template <typename T>
-        static ptrdiff_t thunkOf(T ptr) {
+        static uint32_t thunkOf(T ptr) {
             // msvc
             if (sizeof(T) == sizeof(ptrdiff_t)) return 0;
 
@@ -65,13 +77,18 @@ namespace geode::addresser {
         }
 
         template <class Class>
-        static Class* cachedInstance() {
+        static Class* cachedInstance() requires HasZeroConstructor<Class> {
             static auto ret = new Class(ZeroConstructor);
             return ret;
         }
 
+        template <class Class>
+        static Class* cachedInstance() requires (!HasZeroConstructor<Class>) {
+            return nullptr;
+        }
+
         /**
-         * Specialized functionss
+         * Specialized functions
          */
         template <class Return, class Class, class... Parameters>
         static intptr_t addressOfVirtual(Return (Class::*func)(Parameters...)) {
@@ -91,6 +108,14 @@ namespace geode::addresser {
                 *reinterpret_cast<intptr_t*>(reinterpret_cast<intptr_t>(ins) + thunk) + index
             );
 
+            #ifdef GEODE_IS_WINDOWS
+            // if the first instruction is a long jmp then this might still be a thunk
+            if (*reinterpret_cast<uint8_t*>(address) == 0xE9) {
+                auto relative = *reinterpret_cast<uint32_t*>(address + 1);
+                address = address + relative + 5;
+            }
+            #endif
+
             address = followThunkFunction(address);
 
             return address;
@@ -101,20 +126,10 @@ namespace geode::addresser {
             return addressOfVirtual(reinterpret_cast<Return (Class::*)(Parameters...)>(func));
         }
 
-        template <class Return, class Class, class... Parameters>
-        static intptr_t addressOfNonVirtual(Return (Class::*func)(Parameters...) const) {
-            return addressOfNonVirtual(reinterpret_cast<Return (Class::*)(Parameters...)>(func));
-        }
-
         static intptr_t followThunkFunction(intptr_t address);
 
-        template <class Return, class Class, class... Parameters>
-        static intptr_t addressOfNonVirtual(Return (Class::*func)(Parameters...)) {
-            return followThunkFunction(geode::cast::reference_cast<intptr_t>(func));
-        }
-
-        template <class Return, class... Parameters>
-        static intptr_t addressOfNonVirtual(Return (*func)(Parameters...)) {
+        template <class FnPtr>
+        static intptr_t addressOfNonVirtual(FnPtr func) {
             return followThunkFunction(geode::cast::reference_cast<intptr_t>(func));
         }
 
@@ -129,7 +144,23 @@ namespace geode::addresser {
 
         template <class Function, class Class>
         friend Class rthunkAdjust(Function func, Class self);
+
+        template <class Function>
+        friend intptr_t getVirtualOffset(Function func);
+
+        template <class Function>
+        friend intptr_t getThunkOffset(Function func);
     };
+
+    template <class Function>
+    inline intptr_t getVirtualOffset(Function func) {
+        return Addresser::indexOf(func);
+    }
+
+    template <class Function>
+    inline intptr_t getThunkOffset(Function func) {
+        return Addresser::thunkOf(func);
+    }
 
     /**
      * Gets the real address of a virtual function

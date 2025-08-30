@@ -7,14 +7,14 @@ using namespace geode::prelude;
 constexpr auto NOTIFICATION_FADEIN = .3f;
 constexpr auto NOTIFICATION_FADEOUT = 1.f;
 
-Ref<CCArray> Notification::s_queue = CCArray::create();
+CCArray* Notification::s_queue = nullptr;
 
 bool Notification::init(std::string const& text, CCSprite* icon, float time) {
     if (!CCNodeRGBA::init()) return false;
 
     m_time = time;
 
-    m_bg = CCScale9Sprite::create("square02b_small.png", { 0, 0, 40, 40 });
+    m_bg = CCScale9Sprite::create("square02_small.png", { 0, 0, 40, 40 });
     m_bg->setColor({ 0, 0, 0 });
     this->addChild(m_bg);
 
@@ -55,11 +55,15 @@ void Notification::updateLayout() {
 
 void Notification::showNextNotification() {
     m_showing = false;
+    if (!s_queue) {
+        s_queue = CCArray::create();
+        s_queue->retain();
+    }
     SceneManager::get()->forget(this);
     // remove self from front of queue
     s_queue->removeFirstObject();
     if (auto obj = s_queue->firstObject()) {
-        as<Notification*>(obj)->show();
+        static_cast<Notification*>(obj)->show();
     }
     this->removeFromParent();
 }
@@ -89,6 +93,10 @@ CCSprite* Notification::createIcon(NotificationIcon icon) {
         case NotificationIcon::Error: {
             return CCSprite::createWithSpriteFrameName("GJ_deleteIcon_001.png");
         } break;
+
+        case NotificationIcon::Info: {
+            return CCSprite::createWithSpriteFrameName("GJ_infoIcon_001.png");
+        } break;
     }
 }
 
@@ -98,11 +106,11 @@ Notification* Notification::create(std::string const& text, NotificationIcon ico
 
 Notification* Notification::create(std::string const& text, CCSprite* icon, float time) {
     auto ret = new Notification();
-    if (ret && ret->init(text, icon, time)) {
+    if (ret->init(text, icon, time)) {
         ret->autorelease();
         return ret;
     }
-    CC_SAFE_DELETE(ret);
+    delete ret;
     return nullptr;
 }
 
@@ -156,6 +164,10 @@ void Notification::waitAndHide() {
 }
 
 void Notification::show() {
+    if (!s_queue) {
+        s_queue = CCArray::create();
+        s_queue->retain();
+    }
     if (!m_showing) {
         if (!s_queue->containsObject(this)) {
             s_queue->addObject(this);
@@ -166,39 +178,49 @@ void Notification::show() {
         if (!this->getParent()) {
             auto winSize = CCDirector::get()->getWinSize();
             this->setPosition(winSize.width / 2, winSize.height / 4);
-            this->setZOrder(CCScene::get()->getHighestChildZ() + 100);
-            CCScene::get()->addChild(this);
+            this->setZOrder(CCScene::get()->getChildrenCount() > 0 ? CCScene::get()->getHighestChildZ() + 2 : 10);
         }
         SceneManager::get()->keepAcrossScenes(this);
         m_showing = true;
     }
-    this->runAction(CCSequence::create(
-        CCCallFunc::create(this, callfunc_selector(Notification::animateIn)),
-        // wait for fade-in to finish
-        CCDelayTime::create(NOTIFICATION_FADEIN),
-        CCCallFunc::create(this, callfunc_selector(Notification::wait)),
-        nullptr
-    ));
+
+    auto actions = cocos2d::CCArray::create();
+
+    actions->addObject(CCCallFunc::create(this, callfunc_selector(Notification::animateIn)));
+    // wait for fade-in to finish
+    actions->addObject(CCDelayTime::create(NOTIFICATION_FADEIN));
+    actions->addObject(CCCallFunc::create(this, callfunc_selector(Notification::wait)));
+
+    this->runAction(CCSequence::create(actions));
 }
 
 void Notification::wait() {
     this->stopAllActions();
     if (m_time) {
-        this->runAction(CCSequence::create(
+        this->runAction(CCSequence::createWithTwoActions(
             CCDelayTime::create(m_time),
-            CCCallFunc::create(this, callfunc_selector(Notification::hide)),
-            nullptr
+            CCCallFunc::create(this, callfunc_selector(Notification::hide))
         ));
     }
 }
 
 void Notification::hide() {
     this->stopAllActions();
-    this->runAction(CCSequence::create(
-        CCCallFunc::create(this, callfunc_selector(Notification::animateOut)),
-        // wait for fade-out to finish
-        CCDelayTime::create(NOTIFICATION_FADEOUT),
-        CCCallFunc::create(this, callfunc_selector(Notification::showNextNotification)),
-        nullptr
-    ));
+
+    auto actions = cocos2d::CCArray::create();
+
+    actions->addObject(CCCallFunc::create(this, callfunc_selector(Notification::animateOut)));
+    // wait for fade-out to finish
+    actions->addObject(CCDelayTime::create(NOTIFICATION_FADEOUT));
+    actions->addObject(CCCallFunc::create(this, callfunc_selector(Notification::showNextNotification)));
+
+    this->runAction(CCSequence::create(actions));
+}
+
+void Notification::cancel() {
+    if(m_pParent) return this->hide();
+
+    if (s_queue->containsObject(this)) {
+        s_queue->removeObject(this);
+    }
 }

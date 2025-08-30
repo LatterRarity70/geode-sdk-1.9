@@ -78,11 +78,11 @@ TextDecorationWrapper* TextDecorationWrapper::create(
     TextRenderer::Label const& label, int deco, ccColor3B const& color, GLubyte opacity
 ) {
     auto ret = new TextDecorationWrapper;
-    if (ret && ret->init(label, deco, color, opacity)) {
+    if (ret->init(label, deco, color, opacity)) {
         ret->autorelease();
         return ret;
     }
-    CC_SAFE_DELETE(ret);
+    delete ret;
     return nullptr;
 }
 
@@ -179,11 +179,11 @@ TextLinkedButtonWrapper* TextLinkedButtonWrapper::create(
     TextRenderer::Label const& label, cocos2d::CCObject* target, cocos2d::SEL_MenuHandler handler
 ) {
     auto ret = new TextLinkedButtonWrapper;
-    if (ret && ret->init(label, target, handler)) {
+    if (ret->init(label, target, handler)) {
         ret->autorelease();
         return ret;
     }
-    CC_SAFE_DELETE(ret);
+    delete ret;
     return nullptr;
 }
 
@@ -246,7 +246,7 @@ CCNode* TextRenderer::end(
             case TextAlignment::End: padY = std::max(m_size.height - renderedHeight, 0.f); break;
         }
         // adjust child positions
-        for (auto child : CCArrayExt<CCNode>(m_target->getChildren())) {
+        for (auto child : CCArrayExt<CCNode*>(m_target->getChildren())) {
             child->setPosition(
                 child->getPositionX() + padX,
                 child->getPositionY() + m_target->getContentSize().height - coverage.size.height -
@@ -341,8 +341,8 @@ std::vector<TextRenderer::Label> TextRenderer::renderStringEx(
     auto lastIndent =
         m_indentationStack.size() > 1 ? m_indentationStack.at(m_indentationStack.size() - 1) : .0f;
 
-    if (m_cursor.x == m_origin.x + lastIndent && this->getCurrentIndent() > .0f) {
-        m_cursor.x += this->getCurrentIndent();
+    if (m_cursor.x < m_origin.x + this->getCurrentIndent()) {
+        m_cursor.x = this->getCurrentIndent();
     }
 
     auto createLabel = [&]() -> bool {
@@ -429,8 +429,8 @@ std::vector<TextRenderer::Label> TextRenderer::renderStringEx(
         for (auto& btn : res)
             for (auto& b : res) {
                 if (btn.m_node != b.m_node) {
-                    as<TextLinkedButtonWrapper*>(btn.m_node)
-                        ->link(as<TextLinkedButtonWrapper*>(b.m_node));
+                    static_cast<TextLinkedButtonWrapper*>(btn.m_node)
+                        ->link(static_cast<TextLinkedButtonWrapper*>(b.m_node));
                 }
             }
     }
@@ -479,7 +479,7 @@ void TextRenderer::breakLine(float incY) {
     if (!y && m_fontStack.size()) {
         y = m_fontStack.back()(this->getCurrentStyle()).m_lineHeight * this->getCurrentScale();
         if (!y && m_lastRendered.size()) {
-            y = as<CCNode*>(m_lastRendered.back().m_node)->getScaledContentSize().height;
+            y = static_cast<CCNode*>(m_lastRendered.back().m_node)->getScaledContentSize().height;
         }
         if (!y && m_lastRenderedNode) {
             y = m_lastRenderedNode->getScaledContentSize().height;
@@ -487,7 +487,7 @@ void TextRenderer::breakLine(float incY) {
     }
     if (h > y) y = h;
     m_cursor.y -= y;
-    m_cursor.x = m_origin.x + getCurrentIndent();
+    m_cursor.x = m_origin.x;
 }
 
 float TextRenderer::adjustLineAlignment() {
@@ -697,10 +697,10 @@ TextRenderer::~TextRenderer() {
 
 TextRenderer* TextRenderer::create() {
     auto ret = new TextRenderer();
-    if (ret && ret->init()) {
+    if (ret->init()) {
         ret->autorelease();
         return ret;
     }
-    CC_SAFE_DELETE(ret);
+    delete ret;
     return nullptr;
 }

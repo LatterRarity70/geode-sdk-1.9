@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.3.0)
+cmake_minimum_required(VERSION 3.21)
 
 set(PROJECT_NAME TestMod)
 
@@ -11,4 +11,5 @@ set(GEODE_LINK_SOURCE ON)
 set_target_properties(${PROJECT_NAME} PROPERTIES PREFIX "")
 target_link_libraries(TestMod TestDependency)
 
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/mod.json.in ${CMAKE_CURRENT_SOURCE_DIR}/mod.json)
 setup_geode_mod(${PROJECT_NAME} DONT_INSTALL)

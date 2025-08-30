@@ -56,7 +56,7 @@ class CCImage;
 class CC_DLL CCTextureCache : public CCObject
 {
     GEODE_FRIEND_MODIFY
-protected:
+public:
 
 
     CCDictionary* m_pTextures;
@@ -67,6 +67,7 @@ private:
     /// todo: void addImageWithAsyncObject(CCAsyncObject* async);
     void addImageAsyncCallBack(float dt);
 public:
+    GEODE_CUSTOM_CONSTRUCTOR_COCOS(CCTextureCache, CCObject)
     /**
      *  @js ctor
      *  @lua NA
@@ -87,7 +88,7 @@ public:
      */
     CCDictionary* snapshotTextures();
 
-    /** Returns the shared instance of the cache 
+    /** Returns the shared instance of the cache
      *  @js getInstance
      */
     static CCTextureCache * sharedTextureCache();
@@ -103,10 +104,9 @@ public:
     *  object and it will return it. It will use the filename as a key.
     * Otherwise it will return a reference of a previously loaded image.
     * Supported image extensions: .png, .bmp, .tiff, .jpeg, .pvr, .gif
+    * @note Robtop Addition: added a bool param
     */
-    RT_REMOVE( CCTexture2D* addImage(const char* fileimage); )
-
-    RT_ADD( CCTexture2D* addImage(const char* fileimage, bool ); )
+    CCTexture2D* addImage(const char* fileimage, bool);
 
     /* Returns a Texture2D object given a file image
     * If the file image was not previously loaded, it will create a new CCTexture2D object and it will return it.
@@ -116,8 +116,8 @@ public:
     * @since v0.8
     * @lua NA
     */
-    
-    void addImageAsync(const char *path, CCObject *target, SEL_CallFuncO selector);
+
+	void addImageAsync(char const*, cocos2d::CCObject*, cocos2d::SEL_MenuHandler, int, cocos2d::CCTexture2DPixelFormat);
 
     /* Returns a Texture2D object given an CGImageRef image
     * If the image was not previously loaded, it will create a new CCTexture2D object and it will return it.
@@ -139,7 +139,7 @@ public:
     @since v0.99.5
     */
     CCTexture2D* textureForKey(const char* key);
-    
+
     /** Reload texture from the image file
      * If the file image hasn't loaded before, load it.
      * Otherwise the texture will be reloaded from the file image.
@@ -178,13 +178,13 @@ public:
     * @since v1.0
     */
     void dumpCachedTextureInfo();
-    
+
     /** Returns a Texture2D object given an PVR filename
     * If the file image was not previously loaded, it will create a new CCTexture2D
     *  object and it will return it. Otherwise it will return a reference of a previously loaded image
     */
     CCTexture2D* addPVRImage(const char* filename);
-    
+
     /** Returns a Texture2D object given an ETC filename
      * If the file image was not previously loaded, it will create a new CCTexture2D
      *  object and it will return it. Otherwise it will return a reference of a previously loaded image
@@ -196,6 +196,9 @@ public:
     It's only useful when the value of CC_ENABLE_CACHE_TEXTURE_DATA is 1
     */
     static void reloadAllTextures();
+
+	void prepareAsyncLoading();
+
 };
 
 #if CC_ENABLE_CACHE_TEXTURE_DATA
@@ -215,7 +218,7 @@ public:
     ~VolatileTexture();
 
     static void addImageTexture(CCTexture2D *tt, const char* imageFileName, CCImage::EImageFormat format);
-    static void addStringTexture(CCTexture2D *tt, const char* text, const CCSize& dimensions, CCTextAlignment alignment, 
+    static void addStringTexture(CCTexture2D *tt, const char* text, const CCSize& dimensions, CCTextAlignment alignment,
                                  CCVerticalTextAlignment vAlignment, const char *fontName, float fontSize);
     static void addDataTexture(CCTexture2D *tt, void* data, CCTexture2DPixelFormat pixelFormat, const CCSize& contentSize);
     static void addCCImage(CCTexture2D *tt, CCImage *image);
@@ -227,15 +230,15 @@ public:
 public:
     static std::list<VolatileTexture*> textures;
     static bool isReloading;
-    
+
 private:
     // find VolatileTexture by CCTexture2D*
     // if not found, create a new one
     static VolatileTexture* findVolotileTexture(CCTexture2D *tt);
 
-protected:
+public:
     CCTexture2D *texture;
-    
+
     CCImage *uiImage;
 
     ccCachedImageType m_eCashedImageType;

@@ -1,12 +1,9 @@
-cmake_minimum_required(VERSION 3.3.0)
+cmake_minimum_required(VERSION 3.21)
 
 add_library(ProxyLoader SHARED proxyLoader.c)
-target_compile_features(ProxyLoader PUBLIC cxx_std_17)
 set_target_properties(ProxyLoader PROPERTIES
-	PREFIX "" 
+	PREFIX ""
 	OUTPUT_NAME "XInput9_1_0"
-	RUNTIME_OUTPUT_DIRECTORY "${GEODE_BIN_PATH}/nightly"
-	LIBRARY_OUTPUT_DIRECTORY "${GEODE_BIN_PATH}/nightly"
 	LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${GEODE_BIN_PATH}/nightly"
 	RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${GEODE_BIN_PATH}/nightly"
 	ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO "${GEODE_BIN_PATH}/nightly"
@@ -21,16 +18,17 @@ set_target_properties(ProxyLoader PROPERTIES
 	ARCHIVE_OUTPUT_DIRECTORY "${GEODE_BIN_PATH}/nightly"
 )
 
-add_library(Bootstrapper SHARED Bootstrapper.cpp)
-target_compile_features(Bootstrapper PUBLIC cxx_std_17)
-set_target_properties(Bootstrapper PROPERTIES
-	PREFIX "" 
-	OUTPUT_NAME "GeodeBootstrapper"
-	RUNTIME_OUTPUT_DIRECTORY "${GEODE_BIN_PATH}/nightly"
-	LIBRARY_OUTPUT_DIRECTORY "${GEODE_BIN_PATH}/nightly"
-	LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${GEODE_BIN_PATH}/nightly"
+string(REPLACE "." "_" GEODE_GD_VERSION_IDENTIFIER "_${GEODE_GD_VERSION}")
+target_compile_definitions(ProxyLoader PRIVATE GEODE_GD_VERSION_IDENTIFIER=${GEODE_GD_VERSION_IDENTIFIER})
+
+add_executable(Updater Updater.cpp)
+target_compile_features(Updater PUBLIC cxx_std_17)
+set_target_properties(Updater PROPERTIES
+	PREFIX ""
+	OUTPUT_NAME "GeodeUpdater"
 	RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${GEODE_BIN_PATH}/nightly"
 	ARCHIVE_OUTPUT_DIRECTORY_RELWITHDEBINFO "${GEODE_BIN_PATH}/nightly"
+	LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO "${GEODE_BIN_PATH}/nightly"
 	LIBRARY_OUTPUT_DIRECTORY_RELEASE "${GEODE_BIN_PATH}/nightly"
 	RUNTIME_OUTPUT_DIRECTORY_RELEASE "${GEODE_BIN_PATH}/nightly"
 	ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${GEODE_BIN_PATH}/nightly"
@@ -41,4 +39,14 @@ set_target_properties(Bootstrapper PROPERTIES
 	RUNTIME_OUTPUT_DIRECTORY "${GEODE_BIN_PATH}/nightly"
 	ARCHIVE_OUTPUT_DIRECTORY "${GEODE_BIN_PATH}/nightly"
 )
-target_link_libraries(Bootstrapper PUBLIC ghc_filesystem)
+
+if (MSVC)
+	include(CheckLinkerFlag)
+	check_linker_flag(CXX /NOEXP SUPPORTS_NOEXP)
+	if (SUPPORTS_NOEXP)
+		target_link_options(ProxyLoader PRIVATE /NOEXP)
+	endif()
+
+	target_link_options(ProxyLoader PRIVATE /NOIMPLIB /DEBUG:NONE)
+	target_link_options(Updater PRIVATE /DEBUG:NONE)
+endif()

@@ -52,7 +52,7 @@ enum ccTouchType {
     CCTOUCHMOVED = 1,
     CCTOUCHENDED = 2,
     CCTOUCHCANCELLED = 3,
-    
+
     ccTouchMax = 4,
 };
 
@@ -103,10 +103,10 @@ struct _ccCArray;
  There are 2 different type of touch handlers:
    - Standard Touch Handlers
    - Targeted Touch Handlers
- 
+
  The Standard Touch Handlers work like the CocoaTouch touch handler: a set of touches is passed to the delegate.
  On the other hand, the Targeted Touch Handlers only receive 1 touch at the time, and they can "swallow" touches (avoid the propagation of the event).
- 
+
  Firstly, the dispatcher sends the received touches to the targeted touches.
  These touches can be swallowed by the Targeted Touch Handlers. If there are still remaining touches, then the remaining touches will be sent
  to the Standard Touch Handlers.
@@ -118,6 +118,7 @@ class CC_DLL CCTouchDispatcher : public CCObject, public EGLTouchDelegate
 {
     GEODE_FRIEND_MODIFY
 public:
+    GEODE_CUSTOM_CONSTRUCTOR_COCOS(CCTouchDispatcher, CCObject)
     /**
      * @lua NA
      */
@@ -134,7 +135,7 @@ public:
         , m_pStandardHandlers(NULL)
         , m_pHandlersToAdd(NULL)
         , m_pHandlersToRemove(NULL)
-        
+
     {}
 
 public:
@@ -164,13 +165,13 @@ public:
      */
     void removeDelegate(CCTouchDelegate *pDelegate);
 
-    /** Removes all touch delegates, releasing all the delegates 
+    /** Removes all touch delegates, releasing all the delegates
      * @lua NA
      */
     void removeAllDelegates(void);
 
     /** Changes the priority of a previously added delegate. The lower the number,
-     * the higher the priority 
+     * the higher the priority
      * @lua NA
      */
     void setPriority(int nPriority, CCTouchDelegate *pDelegate);
@@ -201,10 +202,10 @@ public:
      */
     CCTouchHandler* findHandler(CCTouchDelegate *pDelegate);
 
-    RT_ADD(
-        void incrementForcePrio(int priority);
-        void decrementForcePrio(int priority);
-    )
+    // @note RobTop Addition
+    void incrementForcePrio();
+    // @note RobTop Addition
+    void decrementForcePrio();
 protected:
     void forceRemoveDelegate(CCTouchDelegate *pDelegate);
     void forceAddHandler(CCTouchHandler *pHandler, CCArray* pArray);
@@ -212,7 +213,7 @@ protected:
     void rearrangeHandlers(CCArray* pArray);
     CCTouchHandler* findHandler(CCArray* pArray, CCTouchDelegate *pDelegate);
 
-protected:
+public:
     CCArray* m_pTargetedHandlers;
     CCArray* m_pStandardHandlers;
 
@@ -227,10 +228,11 @@ protected:
     // 4, 1 for each type of event
     struct ccTouchHandlerHelperData m_sHandlerHelperData[ccTouchMax];
 
-    RT_ADD(
-        CC_SYNTHESIZE_NV(bool, m_bForcePrio, ForcePrio);
-        CC_SYNTHESIZE_NV(int, m_nTargetPrio, TargetPrio);
-    )
+protected:
+
+    // @note RobTop Addition
+    CC_SYNTHESIZE_NV(bool, m_forcePrio, ForcePrio);
+    CC_SYNTHESIZE_NV(int, m_targetPrio, TargetPrio);
 };
 
 // end of input group

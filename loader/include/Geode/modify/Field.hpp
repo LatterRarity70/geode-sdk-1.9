@@ -3,7 +3,6 @@
 #include "Traits.hpp"
 
 #include <Geode/loader/Loader.hpp>
-#include "../utils/MiniFunction.hpp"
 #include <cocos2d.h>
 #include <vector>
 
@@ -20,37 +19,37 @@ namespace geode::modifier {
     class FieldContainer {
     private:
         std::vector<void*> m_containedFields;
-        std::vector<utils::MiniFunction<void(void*)>> m_destructorFunctions;
+        std::vector<std::function<void(void*)>> m_destructorFunctions;
 
     public:
         ~FieldContainer() {
             for (auto i = 0u; i < m_containedFields.size(); i++) {
-                m_destructorFunctions[i](m_containedFields[i]);
-                operator delete(m_containedFields[i]);
+                if (m_destructorFunctions[i] && m_containedFields[i]) {
+                    m_destructorFunctions[i](m_containedFields[i]);
+                    operator delete(m_containedFields[i]);
+                }
             }
         }
 
         void* getField(size_t index) {
-            if (m_containedFields.size() <= index) {
+            while (m_containedFields.size() <= index) {
                 m_containedFields.push_back(nullptr);
                 m_destructorFunctions.push_back(nullptr);
             }
             return m_containedFields.at(index);
         }
 
-        void* setField(size_t index, size_t size, utils::MiniFunction<void(void*)> destructor) {
+        void* setField(size_t index, size_t size, std::function<void(void*)> destructor) {
             m_containedFields.at(index) = operator new(size);
-            m_destructorFunctions.at(index) = destructor;
+            m_destructorFunctions.at(index) = std::move(destructor);
             return m_containedFields.at(index);
         }
 
-        static FieldContainer* from(cocos2d::CCNode* node) {
-            return node->getFieldContainer();
+        static FieldContainer* from(cocos2d::CCNode* node, char const* forClass) {
+            return node->getFieldContainer(forClass);
         }
     };
 
-    [[deprecated("Will be removed in 1.0.0")]]
-    GEODE_DLL size_t getFieldIndexForClass(size_t hash);
     GEODE_DLL size_t getFieldIndexForClass(char const* name);
 
     template <class Parent, class Base>
@@ -58,48 +57,33 @@ namespace geode::modifier {
         using Intermediate = Modify<Parent, Base>;
         // Padding used for guaranteeing any member of parents
         // will be in between sizeof(Intermediate) and sizeof(Parent)
-        uintptr_t m_padding;
+        std::aligned_storage_t<std::alignment_of_v<Base>, std::alignment_of_v<Base>> m_padding;
 
     public:
         // the constructor that constructs the fields.
         // we construct the Parent first,
         static void fieldConstructor(void* offsetField) {
-            std::array<std::byte, sizeof(Parent)> parentContainer;
-
-            auto parent = new (parentContainer.data()) Parent();
-
-            parent->Intermediate::~Intermediate();
-
-            std::memcpy(
-                offsetField,
-                std::launder(&parentContainer[sizeof(Intermediate)]),
-                sizeof(Parent) - sizeof(Intermediate)
-            );
+            (void) new (offsetField) typename Parent::Fields();
         }
 
         static void fieldDestructor(void* offsetField) {
-            std::array<std::byte, sizeof(Parent)> parentContainer;
-
-            auto parent = new (parentContainer.data()) Intermediate();
-
-            std::memcpy(
-                std::launder(&parentContainer[sizeof(Intermediate)]),
-                offsetField,
-                sizeof(Parent) - sizeof(Intermediate)
-            );
-
-            static_cast<Parent*>(parent)->Parent::~Parent();
+            static_cast<typename Parent::Fields*>(offsetField)->~Fields();
         }
 
-        operator Parent*() {
+        auto self() {
+            static_assert(
+                std::is_base_of_v<cocos2d::CCNode, Base>,
+                "'m_fields' can only be used when modifying classes derived from 'cocos2d::CCNode'"
+            );
+
             // get the this pointer of the base
             // field intermediate is the first member of Modify
-            // meaning we canget the base from ourself
+            // meaning we can get the base from ourself
             auto node = reinterpret_cast<Parent*>(reinterpret_cast<std::byte*>(this) - sizeof(Base));
-            static_assert(sizeof(Base) == offsetof(Parent, m_fields), "offsetof not correct");
+            // static_assert(sizeof(Base) + sizeof() == sizeof(Intermediate), "offsetof not correct");
 
             // generating the container if it doesn't exist
-            auto container = FieldContainer::from(node);
+            auto container = FieldContainer::from(node, typeid(Base).name());
 
             // the index is global across all mods, so the
             // function is defined in the loader source
@@ -110,23 +94,17 @@ namespace geode::modifier {
             auto offsetField = container->getField(index);
             if (!offsetField) {
                 offsetField = container->setField(
-                    index, sizeof(Parent) - sizeof(Intermediate), &FieldIntermediate::fieldDestructor
+                    index, sizeof(typename Parent::Fields), &FieldIntermediate::fieldDestructor
                 );
 
                 FieldIntermediate::fieldConstructor(offsetField);
             }
 
-            return reinterpret_cast<Parent*>(
-                reinterpret_cast<std::byte*>(offsetField) - sizeof(Intermediate)
-            );
-        }
-        
-        Parent* self() {
-            return this->operator Parent*();
+            return reinterpret_cast<typename Parent::Fields*>(offsetField);
         }
 
-        Parent* operator->() {
-            return this->operator Parent*();
+        auto operator->() {
+            return this->self();
         }
     };
 

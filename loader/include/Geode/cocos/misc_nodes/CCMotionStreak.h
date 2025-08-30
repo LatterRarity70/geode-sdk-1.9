@@ -51,12 +51,13 @@ class CC_DLL CCMotionStreak :
     public CCGLBufferedNode
 #endif // EMSCRIPTEN
 {
-
+    GEODE_FRIEND_MODIFY
 public:
     /**
      * @js ctor
      */
     CCMotionStreak();
+    GEODE_CUSTOM_CONSTRUCTOR_COCOS(CCMotionStreak, CCNodeRGBA)
     /**
      * @js NA
      * @lua NA
@@ -112,7 +113,23 @@ public:
     virtual void setOpacityModifyRGB(bool bValue);
     virtual bool isOpacityModifyRGB(void);
 
-    RT_ADD(void resumeStroke(); void stopStroke(););
+    // @note RobTop Addition
+    void resumeStroke();
+    // @note RobTop Addition
+    void stopStroke();
+
+	// @note RobTop Addition
+    virtual float getM_fMaxSeg() const;
+	// @note RobTop Addition
+    virtual void setM_fMaxSeg(float);
+
+	// @note RobTop Addition
+    virtual bool getDontOpacityFade() const;
+	// @note RobTop Addition
+    virtual void setDontOpacityFade(bool);
+
+    // @note RobTop Addition
+	void setStroke(float);
 
     /** When fast mode is enabled, new points are added faster but with lower precision */
     inline bool isFastMode() {
@@ -131,13 +148,13 @@ public:
         m_bStartingPositionInitialized = bStartingPositionInitialized;
     }
 
-protected:
+public:
     bool m_bFastMode;
     bool m_bStartingPositionInitialized;
+    bool m_bStroke;
     /** texture used for the motion streak */
     CCTexture2D* m_pTexture;
     ccBlendFunc m_tBlendFunc;
-    CCPoint m_tPositionR;
 
     float m_fStroke;
     float m_fFadeDelta;
@@ -155,6 +172,11 @@ protected:
     ccVertex2F* m_pVertices;
     GLubyte* m_pColorPointer;
     ccTex2F* m_pTexCoords;
+
+    // @note RobTop Addition
+    float m_fMaxSeg;
+    // @note RobTop Addition
+    bool m_bDontOpacityFade;
 };
 
 // end of misc_nodes group

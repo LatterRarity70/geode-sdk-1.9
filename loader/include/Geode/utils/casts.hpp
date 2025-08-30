@@ -10,6 +10,7 @@ namespace geode::cast {
      * Alias for static_cast
      */
     template <class T, class F>
+    [[deprecated("This will be removed in v5, use static_cast instead")]]
     static constexpr T as(F const v) {
         return static_cast<T>(v);
     }
@@ -61,15 +62,5 @@ namespace geode::cast {
             return base_cast<T>(obj);
         }
         return nullptr;
-    }
-
-    /**
-     * Cast based on RTTI. This behaves as a replacement
-     * of dynamic_cast for cocos and gd classes,
-     * and must be used for expected results.
-     */
-    template <class T, class F>
-    static T safe_cast(F const obj) {
-        return typeinfo_cast<T>(obj);
     }
 }

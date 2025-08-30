@@ -29,7 +29,7 @@ THE SOFTWARE.
 
 NS_CC_BEGIN
 /**
-@brief The device accelerometer reports values for each axis in units of g-force 
+@brief The device accelerometer reports values for each axis in units of g-force
 */
 class CCAcceleration
 {
@@ -42,7 +42,7 @@ public:
 };
 
 /**
-@brief 
+@brief
 The CCAccelerometerDelegate defines a single method for
 receiving acceleration-related data from the system.
 @js NA
@@ -52,6 +52,9 @@ class CC_DLL CCAccelerometerDelegate
 {
     GEODE_FRIEND_MODIFY
 public:
+    GEODE_CUSTOM_CONSTRUCTOR_BEGIN(CCAccelerometerDelegate)
+    CCAccelerometerDelegate() {}
+
     virtual void didAccelerate(CCAcceleration* pAccelerationValue) {CC_UNUSED_PARAM(pAccelerationValue);}
 };
 

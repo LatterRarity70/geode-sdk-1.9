@@ -43,6 +43,7 @@ class CC_DLL CCIMEDispatcher
 {
     GEODE_FRIEND_MODIFY
 public:
+    GEODE_CUSTOM_CONSTRUCTOR_BEGIN(CCIMEDispatcher)
     ~CCIMEDispatcher();
 
     /**
@@ -65,6 +66,8 @@ public:
     */
     void dispatchDeleteBackward();
 
+	bool hasDelegate();
+
     /**
     @brief Get the content text from CCIMEDelegate, retrieved previously from IME.
     */
@@ -76,6 +79,7 @@ public:
     void dispatchKeyboardWillShow(CCIMEKeyboardNotificationInfo& info);
     void dispatchKeyboardDidShow(CCIMEKeyboardNotificationInfo& info);
     void dispatchKeyboardWillHide(CCIMEKeyboardNotificationInfo& info);
+    void dispatchKeyboardWillHide();
     void dispatchKeyboardDidHide(CCIMEKeyboardNotificationInfo& info);
 
 protected:
@@ -88,7 +92,7 @@ protected:
 
     /**
     @brief Attach the pDelegate to the IME.
-    @return If the old delegate can detach from the IME, and the new delegate 
+    @return If the old delegate can detach from the IME, and the new delegate
             can attach to the IME, return true, otherwise false.
     */
     bool attachDelegateWithIME(CCIMEDelegate * pDelegate);
@@ -101,7 +105,7 @@ protected:
 
 private:
     CCIMEDispatcher();
-    
+
     class Impl;
     Impl * m_pImpl;
 };

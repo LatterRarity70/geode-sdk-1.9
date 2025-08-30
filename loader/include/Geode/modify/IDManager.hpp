@@ -13,7 +13,7 @@ namespace geode {
         { T::CLASS_NAME } -> std::convertible_to<const char*>;
     };
 
-    class GEODE_DLL NodeIDs {
+    class GEODE_DLL NodeIDs final {
     public:
         template<class T>
         using Provider = void(GEODE_CALL*)(T*);
@@ -50,8 +50,8 @@ namespace geode {
 
     template<IDProvidable For>
     void GEODE_CALL geodeInternalProvideIDsFor(For* cls) {
-        if (cls->getID() != For::CLASS_NAME) {
-            cls->setID(For::CLASS_NAME);
+        if (cls->CCNode::getID() != For::CLASS_NAME) {
+            cls->CCNode::setID(For::CLASS_NAME);
             cls->provide();
             EnterLayerEvent(For::CLASS_NAME, cls).post();
         }
@@ -67,4 +67,4 @@ namespace geode {
             &geodeInternalProvideIDsFor<GEODE_CONCAT(ProvideIDsFor, Layer_)>\
         );\
 	};\
-    void GEODE_CONCAT(ProvideIDsFor, Layer_)::provide() 
+    void GEODE_CONCAT(ProvideIDsFor, Layer_)::provide()

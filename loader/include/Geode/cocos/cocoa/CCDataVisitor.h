@@ -25,6 +25,7 @@
 #ifndef __CCDATAVISITOR_H__
 #define __CCDATAVISITOR_H__
 
+#include "../../DefaultInclude.hpp"
 #include "../platform/CCPlatformMacros.h"
 #include <string>
 
@@ -89,10 +90,10 @@ class CC_DLL CCPrettyPrinter : public CCDataVisitor
     GEODE_FRIEND_MODIFY
 public:
     CCPrettyPrinter(int indentLevel = 0);
-    
+
     virtual void clear();
     virtual gd::string getResult();
-    
+
     virtual void visitObject(const CCObject *p);
     virtual void visit(const CCBool * p);
     virtual void visit(const CCInteger *p);
@@ -104,6 +105,7 @@ public:
     virtual void visit(const CCSet *p);
 private:
     void setIndentLevel(int indentLevel);
+public:
     int _indentLevel;
     gd::string _indentStr;
     gd::string _result;

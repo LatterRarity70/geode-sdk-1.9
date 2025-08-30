@@ -1,21 +1,42 @@
 #include "ModImpl.hpp"
 #include "LoaderImpl.hpp"
-#include "ModInfoImpl.hpp"
+#include "ModMetadataImpl.hpp"
+#include "HookImpl.hpp"
+#include "PatchImpl.hpp"
 #include "about.hpp"
+#include "console.hpp"
 
+#include <hash/hash.hpp>
 #include <Geode/loader/Dirs.hpp>
 #include <Geode/loader/Hook.hpp>
 #include <Geode/loader/Loader.hpp>
 #include <Geode/loader/Log.hpp>
 #include <Geode/loader/Mod.hpp>
 #include <Geode/loader/ModEvent.hpp>
+#include <Geode/platform/cplatform.h>
 #include <Geode/utils/file.hpp>
 #include <Geode/utils/JsonValidation.hpp>
+#include <Geode/utils/string.hpp>
+#include <filesystem>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <vector>
+#include <string_view>
 
 using namespace geode::prelude;
+
+static constexpr const char* humanReadableDescForAction(ModRequestedAction action) {
+    switch (action) {
+        default: return "(Unknown action)";
+        case ModRequestedAction::None: return "(No action has been taken)";
+        case ModRequestedAction::Enable: return "Mod has been enabled";
+        case ModRequestedAction::Disable: return "Mod has been disabled";
+        case ModRequestedAction::Uninstall: return "Mod has been uninstalled";
+        case ModRequestedAction::UninstallWithSaveData: return "Mod has been uninstalled";
+        case ModRequestedAction::Update: return "Mod has been updated";
+    }
+}
 
 Mod::Impl* ModImpl::get() {
     return Mod::get()->m_impl.get();
@@ -25,163 +46,167 @@ Mod::Impl* ModImpl::getImpl(Mod* mod)  {
     return mod->m_impl.get();
 }
 
-Mod::Impl::Impl(Mod* self, ModInfo const& info) : m_self(self), m_info(info) {
+Mod::Impl::Impl(Mod* self, ModMetadata const& metadata) : m_self(self), m_metadata(metadata) {
 }
 
-Mod::Impl::~Impl() {
-    (void)this->unloadBinary();
-}
+Mod::Impl::~Impl() = default;
 
 Result<> Mod::Impl::setup() {
-    m_saveDirPath = dirs::getModsSaveDir() / m_info.id();
-    ghc::filesystem::create_directories(m_saveDirPath);
-    
-    this->setupSettings();
+    m_saveDirPath = dirs::getModsSaveDir() / m_metadata.getID();
+    (void) utils::file::createDirectoryAll(m_saveDirPath);
+
+    // always create temp dir for all mods, even if disabled, so resources can be loaded
+    GEODE_UNWRAP(this->createTempDir().mapErr([](auto const& err) {
+        return fmt::format("Unable to create temp dir: {}", err);
+    }));
+
+    m_settings = std::make_unique<ModSettingsManager>(m_metadata);
     auto loadRes = this->loadData();
     if (!loadRes) {
-        log::warn("Unable to load data for \"{}\": {}", m_info.id(), loadRes.unwrapErr());
+        log::warn("Unable to load data for \"{}\": {}", m_metadata.getID(), loadRes.unwrapErr());
     }
+    if (!m_resourcesLoaded && !this->isInternal()) {
+        auto searchPathRoot = dirs::getModRuntimeDir() / m_metadata.getID() / "resources";
+
+        // Hi, linux bros!
+        Loader::get()->queueInMainThread([searchPathRoot]() {
+            CCFileUtils::get()->addSearchPath(searchPathRoot.string().c_str());
+        });
+
+        // binaries on macos are merged, so make the platform binaries merged as well
+        auto const binaryPlatformId = PlatformID::toShortString(GEODE_PLATFORM_TARGET GEODE_MACOS(, true));
+
+        auto const binariesDir = searchPathRoot / m_metadata.getID() / "binaries" / binaryPlatformId;
+
+        std::error_code code;
+        if (std::filesystem::exists(binariesDir, code) && !code) {
+            LoaderImpl::get()->addNativeBinariesPath(binariesDir);
+        }
+
+        m_resourcesLoaded = true;
+    }
+
     return Ok();
 }
 
 // Getters
 
-ghc::filesystem::path Mod::Impl::getSaveDir() const {
+std::filesystem::path Mod::Impl::getSaveDir() const {
     return m_saveDirPath;
 }
 
 std::string Mod::Impl::getID() const {
-    return m_info.id();
+    return m_metadata.getID();
 }
 
 std::string Mod::Impl::getName() const {
-    return m_info.name();
+    return m_metadata.getName();
 }
 
-std::string Mod::Impl::getDeveloper() const {
-    return m_info.developer();
+std::vector<std::string> Mod::Impl::getDevelopers() const {
+    return m_metadata.getDevelopers();
 }
 
 std::optional<std::string> Mod::Impl::getDescription() const {
-    return m_info.description();
+    return m_metadata.getDescription();
 }
 
 std::optional<std::string> Mod::Impl::getDetails() const {
-    return m_info.details();
+    return m_metadata.getDetails();
 }
 
-ModInfo Mod::Impl::getModInfo() const {
-    return m_info;
+ModMetadata const& Mod::Impl::getMetadata() const {
+    return m_metadata;
 }
 
-ghc::filesystem::path Mod::Impl::getTempDir() const {
+#if defined(GEODE_EXPOSE_SECRET_INTERNALS_IN_HEADERS_DO_NOT_DEFINE_PLEASE)
+void Mod::Impl::setMetadata(ModMetadata const& metadata) {
+    m_metadata = metadata;
+}
+std::vector<Mod*> Mod::Impl::getDependants() const {
+    return m_dependants;
+}
+#endif
+
+std::filesystem::path Mod::Impl::getTempDir() const {
     return m_tempDirName;
 }
 
-ghc::filesystem::path Mod::Impl::getBinaryPath() const {
-    return m_tempDirName / m_info.binaryName();
+std::filesystem::path Mod::Impl::getBinaryPath() const {
+    if (auto value = LoaderImpl::get()->getBinaryPath()) {
+        return std::filesystem::path(value.value()) / m_metadata.getBinaryName();
+    }
+    return m_tempDirName / m_metadata.getBinaryName();
 }
 
-ghc::filesystem::path Mod::Impl::getPackagePath() const {
-    return m_info.path();
+std::filesystem::path Mod::Impl::getPackagePath() const {
+    return m_metadata.getPath();
 }
 
 VersionInfo Mod::Impl::getVersion() const {
-    return m_info.version();
+    return m_metadata.getVersion();
 }
 
-json::Value& Mod::Impl::getSaveContainer() {
+matjson::Value& Mod::Impl::getSaveContainer() {
     return m_saved;
 }
 
 bool Mod::Impl::isEnabled() const {
-    return m_enabled;
+    return m_enabled || m_metadata.getID() == "geode.loader";
 }
 
-bool Mod::Impl::isLoaded() const {
-    return m_binaryLoaded;
+bool Mod::Impl::isInternal() const {
+    return m_metadata.getID() == "geode.loader" || m_metadata.getInternalBinary().has_value();
 }
 
-bool Mod::Impl::supportsDisabling() const {
-    return m_info.supportsDisabling();
-}
-
-bool Mod::Impl::supportsUnloading() const {
-    return m_info.supportsUnloading();
-}
-
-bool Mod::Impl::wasSuccesfullyLoaded() const {
-    return !this->isEnabled() || this->isLoaded();
+bool Mod::Impl::needsEarlyLoad() const {
+    if (this->getMetadata().needsEarlyLoad()) return true;
+    for (auto& dep : m_dependants) {
+        if (dep->needsEarlyLoad()) return true;
+    }
+    return false;
 }
 
 std::vector<Hook*> Mod::Impl::getHooks() const {
-    return m_hooks;
+    std::vector<Hook*> ret;
+    for (auto& hook : m_hooks) {
+        ret.push_back(hook.get());
+    }
+    return ret;
+}
+
+std::vector<Patch*> Mod::Impl::getPatches() const {
+    std::vector<Patch*> ret;
+    for (auto& patch : m_patches) {
+        ret.push_back(patch.get());
+    }
+    return ret;
 }
 
 // Settings and saved values
 
 Result<> Mod::Impl::loadData() {
-    Loader::get()->queueInGDThread([&]() {
-        ModStateEvent(m_self, ModEventType::DataLoaded).post();
-    });
-
     // Settings
     // Check if settings exist
     auto settingPath = m_saveDirPath / "settings.json";
-    if (ghc::filesystem::exists(settingPath)) {
-        GEODE_UNWRAP_INTO(auto settingData, utils::file::readString(settingPath));
-        try {
-            // parse settings.json
-            auto json = json::parse(settingData);
-
-            JsonChecker checker(json);
-            auto root = checker.root("[settings.json]");
-
-            m_savedSettingsData = json;
-
-            for (auto& [key, value] : root.items()) {
-                // check if this is a known setting
-                if (auto setting = this->getSetting(key)) {
-                    // load its value
-                    if (!setting->load(value.json())) {
-                        log::internalLog(
-                            Severity::Error,
-                            m_self,
-                            "{}: Unable to load value for setting \"{}\"",
-                            m_info.id(),
-                            key
-                        );
-                    }
-                }
-                else {
-                    log::internalLog(
-                        Severity::Warning,
-                        m_self,
-                        "Encountered unknown setting \"{}\" while loading "
-                        "settings",
-                        key
-                    );
-                }
-            }
-        }
-        catch (std::exception& e) {
-            return Err(std::string("Unable to parse settings: ") + e.what());
+    if (std::filesystem::exists(settingPath)) {
+        GEODE_UNWRAP_INTO(auto json, utils::file::readJson(settingPath));
+        auto load = m_settings->load(json);
+        if (!load) {
+            log::warn("Unable to load settings: {}", load.unwrapErr());
         }
     }
 
     // Saved values
     auto savedPath = m_saveDirPath / "saved.json";
-    if (ghc::filesystem::exists(savedPath)) {
+    if (std::filesystem::exists(savedPath)) {
         GEODE_UNWRAP_INTO(auto data, utils::file::readString(savedPath));
-
-        try {
-            m_saved = json::parse(data);
-        } catch (std::exception& err) {
-            return Err(std::string("Unable to parse saved values: ") + err.what());
-        }
-        if (!m_saved.is_object()) {
+        m_saved = GEODE_UNWRAP(matjson::parse(data).mapErr([](auto&& err) {
+            return fmt::format("Unable to parse saved values: {}", err);
+        }));
+        if (!m_saved.isObject()) {
             log::warn("saved.json was somehow not an object, forcing it to one");
-            m_saved = json::Object();
+            m_saved = matjson::Value::object();
         }
     }
 
@@ -189,46 +214,22 @@ Result<> Mod::Impl::loadData() {
 }
 
 Result<> Mod::Impl::saveData() {
+    if (this->getRequestedAction() == ModRequestedAction::UninstallWithSaveData) {
+        // Don't save data if the mod is being uninstalled with save data
+        return Ok();
+    }
+
+    // ModSettingsManager keeps track of the whole savedata
+    matjson::Value json = m_settings->save();
+
     // saveData is expected to be synchronous, and always called from GD thread
     ModStateEvent(m_self, ModEventType::DataSaved).post();
 
-    // Data saving should be fully fail-safe
-
-    std::unordered_set<std::string> coveredSettings;
-
-    // Settings
-    json::Value json = json::Object();
-    for (auto& [key, value] : m_settings) {
-        coveredSettings.insert(key);
-        if (!value->save(json[key])) {
-            log::error("Unable to save setting \"" + key + "\"");
-        }
-    }
-
-    // if some settings weren't provided a custom settings handler (for example,
-    // the mod was not loaded) then make sure to save their previous state in
-    // order to not lose data
-    try {
-        log::debug("Check covered");
-        for (auto& [key, value] : m_savedSettingsData.as_object()) {
-            log::debug("Check if {} is saved", key);
-            if (!coveredSettings.count(key)) {
-                json[key] = value;
-            }
-        }
-    }
-    catch (...) {
-    }
-
-    std::string settingsStr = json.dump();
-    std::string savedStr = m_saved.dump();
-
-    auto res = utils::file::writeString(m_saveDirPath / "settings.json", settingsStr);
+    auto res = utils::file::writeStringSafe(m_saveDirPath / "settings.json", json.dump());
     if (!res) {
         log::error("Unable to save settings: {}", res.unwrapErr());
     }
-
-    auto res2 = utils::file::writeString(m_saveDirPath / "saved.json", savedStr);
+    auto res2 = utils::file::writeStringSafe(m_saveDirPath / "saved.json", m_saved.dump());
     if (!res2) {
         log::error("Unable to save values: {}", res2.unwrapErr());
     }
@@ -236,54 +237,20 @@ Result<> Mod::Impl::saveData() {
     return Ok();
 }
 
-void Mod::Impl::setupSettings() {
-    for (auto& [key, sett] : m_info.settings()) {
-        if (auto value = sett.createDefaultValue()) {
-            m_settings.emplace(key, std::move(value));
-        }
-    }
-}
-
-void Mod::Impl::registerCustomSetting(std::string const& key, std::unique_ptr<SettingValue> value) {
-    if (!m_settings.count(key)) {
-        // load data
-        if (m_savedSettingsData.contains(key)) {
-            value->load(m_savedSettingsData[key]);
-        }
-        m_settings.emplace(key, std::move(value));
-    }
-}
-
 bool Mod::Impl::hasSettings() const {
-    return m_info.settings().size();
+    return m_metadata.getSettings().size();
 }
 
 std::vector<std::string> Mod::Impl::getSettingKeys() const {
     std::vector<std::string> keys;
-    for (auto& [key, _] : m_info.settings()) {
+    for (auto& [key, _] : m_metadata.getSettings()) {
         keys.push_back(key);
     }
     return keys;
 }
 
-std::optional<Setting> Mod::Impl::getSettingDefinition(std::string const& key) const {
-    for (auto& setting : m_info.settings()) {
-        if (setting.first == key) {
-            return setting.second;
-        }
-    }
-    return std::nullopt;
-}
-
-SettingValue* Mod::Impl::getSetting(std::string const& key) const {
-    if (m_settings.count(key)) {
-        return m_settings.at(key).get();
-    }
-    return nullptr;
-}
-
-bool Mod::Impl::hasSetting(std::string const& key) const {
-    for (auto& setting : m_info.settings()) {
+bool Mod::Impl::hasSetting(std::string_view key) const {
+    for (auto& setting : m_metadata.getSettings()) {
         if (setting.first == key) {
             return true;
         }
@@ -291,213 +258,216 @@ bool Mod::Impl::hasSetting(std::string const& key) const {
     return false;
 }
 
+std::string Mod::Impl::getLaunchArgumentName(std::string_view name) const {
+    return this->getID() + "." + std::string(name);
+}
+
+std::vector<std::string> Mod::Impl::getLaunchArgumentNames() const {
+    auto prefix = this->getID() + ".";
+    std::vector<std::string> names;
+    for (const auto& name : Loader::get()->getLaunchArgumentNames()) {
+        if (name.starts_with(prefix)) {
+            names.push_back(name.substr(prefix.size()));
+        }
+    }
+    return names;
+}
+
+bool Mod::Impl::hasLaunchArgument(std::string_view name) const {
+    return Loader::get()->hasLaunchArgument(this->getLaunchArgumentName(name));
+}
+
+std::optional<std::string> Mod::Impl::getLaunchArgument(std::string_view name) const {
+    return Loader::get()->getLaunchArgument(this->getLaunchArgumentName(name));
+}
+
+bool Mod::Impl::getLaunchFlag(std::string_view name) const {
+    return Loader::get()->getLaunchFlag(this->getLaunchArgumentName(name));
+}
+
 // Loading, Toggling, Installing
 
 Result<> Mod::Impl::loadBinary() {
-    log::debug("Loading binary for mod {}", m_info.id());
-    if (m_binaryLoaded) {
+    if (!this->isInternal() && LoaderImpl::get()->isSafeMode()) {
+        // pretend to have loaded the mod, so that it still shows up on the mod list properly,
+        // while the user can still toggle/uninstall it
+        m_enabled = true;
         return Ok();
     }
 
-    GEODE_UNWRAP(this->createTempDir());
+    log::debug("Loading binary for mod {}", m_metadata.getID());
+    if (m_enabled)
+        return Ok();
 
-    if (this->hasUnresolvedDependencies()) {
-        return Err("Mod has unresolved dependencies");
+    if (this->m_metadata.getInternalBinary()) {
+        LoaderImpl::get()->provideNextMod(m_self);
+
+        m_enabled = true;
+        m_isCurrentlyLoading = true;
+
+        auto res = this->loadInternalBinary();
+        if (!res) {
+            m_isCurrentlyLoading = false;
+            m_enabled = false;
+
+            LoaderImpl::get()->releaseNextMod();
+            log::error("Failed to load internal binary for mod {}: {}", m_metadata.getID(), res.unwrapErr());
+            return res;
+        }
+
+        LoaderImpl::get()->releaseNextMod();
+
+        ModStateEvent(m_self, ModEventType::Loaded).post();
+        ModStateEvent(m_self, ModEventType::DataLoaded).post();
+
+        m_isCurrentlyLoading = false;
+
+        return Ok();
+    }
+
+    if (!std::filesystem::exists(this->getBinaryPath())) {
+        std::error_code ec;
+        std::filesystem::remove(m_tempDirName / "modified-at", ec);
+        return Err(
+            fmt::format(
+                "Failed to load {}: No binary could be found for current platform.\n"
+                "This mod doesn't support this platform" GEODE_WINDOWS(" or something deleted it (like an antivirus)") ".",
+                m_metadata.getID()
+            )
+        );
     }
 
     LoaderImpl::get()->provideNextMod(m_self);
 
+    m_enabled = true;
+    m_isCurrentlyLoading = true;
     auto res = this->loadPlatformBinary();
     if (!res) {
+        m_isCurrentlyLoading = false;
+        m_enabled = false;
         // make sure to free up the next mod mutex
         LoaderImpl::get()->releaseNextMod();
-        log::warn("Failed to load binary for mod {}: {}", m_info.id(), res.unwrapErr());
+        log::error("Failed to load binary for mod {}: {}", m_metadata.getID(), res.unwrapErr());
         return res;
     }
-    m_binaryLoaded = true;
 
     LoaderImpl::get()->releaseNextMod();
 
-    Loader::get()->queueInGDThread([&]() {
-        ModStateEvent(m_self, ModEventType::Loaded).post();
-    });
+    ModStateEvent(m_self, ModEventType::Loaded).post();
+    ModStateEvent(m_self, ModEventType::DataLoaded).post();
 
-    Loader::get()->updateAllDependencies();
-    if (LoaderImpl::get()->m_isSetup) {
-        Loader::get()->updateResources(false);
-    }
-    
-    log::debug("Enabling mod {}", m_info.id());
-    GEODE_UNWRAP(this->enable());
-
-    return Ok();
-}
-
-Result<> Mod::Impl::unloadBinary() {
-    if (!m_binaryLoaded) {
-        return Ok();
+    // do we not have a function for getting all the dependencies of a mod directly? ok then
+    // Anyway this lets all of this mod's dependencies know it has been loaded
+    // In case they're API mods and want to know those kinds of things
+    for (auto const& dep : ModMetadataImpl::getImpl(m_metadata).m_dependencies) {
+        if (auto depMod = Loader::get()->getLoadedMod(dep.id)) {
+            DependencyLoadedEvent(depMod, m_self).post();
+        }
     }
 
-    if (!m_info.supportsUnloading()) {
-        return Err("Mod does not support unloading");
-    }
-
-    GEODE_UNWRAP(this->saveData());
-
-    GEODE_UNWRAP(this->disable());
-    Loader::get()->queueInGDThread([&]() {
-        ModStateEvent(m_self, ModEventType::Unloaded).post();
-    });
-
-    // Disabling unhooks and unpatches already
-    for (auto const& hook : m_hooks) {
-        delete hook;
-    }
-    m_hooks.clear();
-
-    for (auto const& patch : m_patches) {
-        delete patch;
-    }
-    m_patches.clear();
-
-    GEODE_UNWRAP(this->unloadPlatformBinary());
-    m_binaryLoaded = false;
-
-    Loader::get()->updateAllDependencies();
+    m_isCurrentlyLoading = false;
 
     return Ok();
 }
 
 Result<> Mod::Impl::enable() {
-    if (!m_binaryLoaded) {
-        return this->loadBinary();
-    }
+    switch (m_requestedAction) {
+        // Allow reverting disabling
+        case ModRequestedAction::Disable: {
+            m_requestedAction = ModRequestedAction::None;
+        } break;
 
-    for (auto const& hook : m_hooks) {
-        if (!hook) {
-            log::warn("Hook is null in mod \"{}\"", m_info.name());
-            continue;
-        }
-        if (hook->getAutoEnable()) {
-            GEODE_UNWRAP(this->enableHook(hook));
-        }
-    }
+        // Only possible to enable otherwise
+        case ModRequestedAction::None: {
+            m_requestedAction = ModRequestedAction::Enable;
+        } break;
 
-    for (auto const& patch : m_patches) {
-        if (!patch->apply()) {
-            log::warn("Unable to apply patch at {}", patch->getAddress());
-            continue;
-        }
+        default: {
+            return Err(humanReadableDescForAction(m_requestedAction));
+        } break;
     }
-
-    Loader::get()->queueInGDThread([&]() {
-        ModStateEvent(m_self, ModEventType::Enabled).post();
-    });
-    m_enabled = true;
+    Mod::get()->setSavedValue("should-load-" + m_metadata.getID(), true);
 
     return Ok();
 }
 
 Result<> Mod::Impl::disable() {
-    if (!m_enabled) {
-        return Ok();
-    }
-    if (!m_info.supportsDisabling()) {
-        return Err("Mod does not support disabling");
-    }
+    switch (m_requestedAction) {
+        // Allow reverting enabling
+        case ModRequestedAction::Enable: {
+            m_requestedAction = ModRequestedAction::None;
+        } break;
 
-    Loader::get()->queueInGDThread([&]() {
-        ModStateEvent(m_self, ModEventType::Disabled).post();
-    });
+        // Only possible to enable otherwise
+        case ModRequestedAction::None: {
+            m_requestedAction = ModRequestedAction::Disable;
+        } break;
 
-    for (auto const& hook : m_hooks) {
-        GEODE_UNWRAP(this->disableHook(hook));
+        default: {
+            return Err(humanReadableDescForAction(m_requestedAction));
+        } break;
     }
-    for (auto const& patch : m_patches) {
-        if (!patch->restore()) {
-            return Err("Unable to restore patch at " + std::to_string(patch->getAddress()));
-        }
-    }
-
-    m_enabled = false;
+    Mod::get()->setSavedValue("should-load-" + m_metadata.getID(), false);
 
     return Ok();
 }
 
-Result<> Mod::Impl::uninstall() {
-    if (m_info.supportsDisabling()) {
-        GEODE_UNWRAP(this->disable());
-        if (m_info.supportsUnloading()) {
-            GEODE_UNWRAP(this->unloadBinary());
-        }
+Result<> Mod::Impl::uninstall(bool deleteSaveData) {
+    // Allow uninstalling if the mod has been disabled / enabled
+    if (modRequestedActionIsUninstall(m_requestedAction)) {
+        return Err(humanReadableDescForAction(m_requestedAction));
     }
 
-    try {
-        ghc::filesystem::remove(m_info.path());
+    if (this->isInternal()) {
+        utils::game::launchLoaderUninstaller(deleteSaveData);
+        utils::game::exit(true);
+        return Ok();
     }
-    catch (std::exception& e) {
+
+    m_requestedAction = deleteSaveData ?
+        ModRequestedAction::UninstallWithSaveData :
+        ModRequestedAction::Uninstall;
+
+    // Make loader forget the mod should be disabled
+    Mod::get()->getSaveContainer().erase("should-load-" + m_metadata.getID());
+
+    std::error_code ec;
+    std::filesystem::remove(m_metadata.getPath(), ec);
+    if (ec) {
         return Err(
-            "Unable to delete mod's .geode file! "
-            "This might be due to insufficient permissions - "
-            "try running GD as administrator."
+            "Unable to delete mod's .geode file: " + ec.message()
         );
+    }
+
+    if (deleteSaveData) {
+        std::filesystem::remove_all(this->getSaveDir(), ec);
+        if (ec) {
+            return Err(
+                "Unable to delete mod's save directory: " + ec.message()
+            );
+        }
     }
 
     return Ok();
 }
 
 bool Mod::Impl::isUninstalled() const {
-    return m_self != Mod::get() && !ghc::filesystem::exists(m_info.path());
+    return modRequestedActionIsUninstall(m_requestedAction);
+}
+
+ModRequestedAction Mod::Impl::getRequestedAction() const {
+    return m_requestedAction;
 }
 
 // Dependencies
 
 Result<> Mod::Impl::updateDependencies() {
-    bool hasUnresolved = false;
-    for (auto& dep : m_info.dependencies()) {
-        // set the dependency's loaded mod if such exists
-        if (!dep.mod) {
-            dep.mod = Loader::get()->getLoadedMod(dep.id);
-            // verify loaded dependency version
-            if (dep.mod && !dep.version.compare(dep.mod->getVersion())) {
-                dep.mod = nullptr;
-            }
-        }
-
-        // check if the dependency is loaded
-        if (dep.mod) {
-            // update the dependency recursively
-            GEODE_UNWRAP(dep.mod->updateDependencies());
-
-            // enable mod if it's resolved & enabled
-            if (!dep.mod->hasUnresolvedDependencies()) {
-                if (dep.mod->isEnabled()) {
-                    GEODE_UNWRAP(dep.mod->loadBinary().expect("Unable to load dependency: {error}"));
-                }
-            }
-        }
-        // check if the dependency is resolved now
-        if (!dep.isResolved()) {
-            GEODE_UNWRAP(this->unloadBinary().expect("Unable to unload mod: {error}"));
-            hasUnresolved = true;
-        }
-    }
-    // load if there weren't any unresolved dependencies
-    if (!hasUnresolved && !m_binaryLoaded) {
-        log::debug("All dependencies for {} found", m_info.id());
-        if (m_enabled) {
-            log::debug("Resolved & loading {}", m_info.id());
-            GEODE_UNWRAP(this->loadBinary());
-        }
-        else {
-            log::debug("Resolved {}, however not loading it as it is disabled", m_info.id());
-        }
-    }
-    return Ok();
+    return Err("Mod::updateDependencies is no longer needed, "
+        "as this is handled by Loader::refreshModGraph");
 }
 
 bool Mod::Impl::hasUnresolvedDependencies() const {
-    for (auto const& dep : m_info.dependencies()) {
+    for (auto const& dep : m_metadata.getDependencies()) {
         if (!dep.isResolved()) {
             return true;
         }
@@ -505,96 +475,130 @@ bool Mod::Impl::hasUnresolvedDependencies() const {
     return false;
 }
 
-std::vector<Dependency> Mod::Impl::getUnresolvedDependencies() {
-    std::vector<Dependency> unresolved;
-    for (auto const& dep : m_info.dependencies()) {
+bool Mod::Impl::hasUnresolvedIncompatibilities() const {
+    for (auto const& dep : m_metadata.getIncompatibilities()) {
         if (!dep.isResolved()) {
-            unresolved.push_back(dep);
+            return true;
         }
     }
-    return unresolved;
+    return false;
 }
 
-bool Mod::Impl::depends(std::string const& id) const {
-    return utils::ranges::contains(m_info.dependencies(), [id](Dependency const& t) {
+bool Mod::Impl::depends(std::string_view id) const {
+    return utils::ranges::contains(m_metadata.getDependencies(), [id](ModMetadata::Dependency const& t) {
         return t.id == id;
     });
 }
 
 // Hooks
 
-Result<> Mod::Impl::enableHook(Hook* hook) {
-    auto res = hook->enable();
-    if (!res) {
-        log::error("Can't enable hook {} for mod {}: {}", hook->getDisplayName(), m_info.id(), res.unwrapErr());
+Result<Hook*> Mod::Impl::claimHook(std::shared_ptr<Hook> hook) {
+    auto res1 = hook->m_impl->setOwner(m_self);
+    if (!res1) {
+        return Err("Cannot claim hook: {}", res1.unwrapErr());
     }
 
-    return res;
-}
-
-Result<> Mod::Impl::disableHook(Hook* hook) {
-    return hook->disable();
-}
-
-Result<Hook*> Mod::Impl::addHook(Hook* hook) {
     m_hooks.push_back(hook);
-    if (LoaderImpl::get()->isReadyToHook()) {
-        if (hook->getAutoEnable()) {
-            auto res = this->enableHook(hook);
-            if (!res) {
-                delete hook;
-                return Err("Can't create hook: "+ res.unwrapErr());
-            }
-        }
-    }
-    else {
-        LoaderImpl::get()->addInternalHook(hook, m_self);
+
+    auto ptr = hook.get();
+    if (!this->isEnabled() || !hook->getAutoEnable())
+        return Ok(ptr);
+
+    if (!LoaderImpl::get()->isReadyToHook() && hook->getAutoEnable()) {
+        LoaderImpl::get()->addUninitializedHook(ptr, m_self);
+        return Ok(ptr);
     }
 
-    return Ok(hook);
+    auto res2 = ptr->enable();
+    if (!res2) {
+        return Err("Cannot enable hook: {}", res2.unwrapErr());
+    }
+
+    return Ok(ptr);
 }
 
-Result<> Mod::Impl::removeHook(Hook* hook) {
-    auto res = this->disableHook(hook);
-    if (res) {
-        ranges::remove(m_hooks, hook);
-        delete hook;
+Result<> Mod::Impl::disownHook(Hook* hook) {
+    if (hook->getOwner() != m_self) {
+        return Err("Cannot disown hook not owned by this mod");
     }
-    return res;
+
+    auto res1 = hook->m_impl->setOwner(nullptr);
+    if (!res1) {
+        return Err("Cannot disown hook: {}", res1.unwrapErr());
+    }
+
+    auto foundIt = std::find_if(m_hooks.begin(), m_hooks.end(), [&](auto& a) {
+        return a.get() == hook;
+    });
+    if (foundIt == m_hooks.end())
+        return Err("WEE, WOO !! Something just went horribly wrong! "
+                   "A hook that was getting disowned had its owner set but the owner "
+                   "didn't have the hook in m_hooks.");
+
+    m_hooks.erase(foundIt);
+
+    if (!this->isEnabled() || !hook->getAutoEnable())
+        return Ok();
+
+    auto res2 = hook->disable();
+    if (!res2) {
+        return Err("Cannot disable hook: {}", res2.unwrapErr());
+    }
+
+    return Ok();
 }
 
 // Patches
 
-// TODO: replace this with a safe one
-static ByteVector readMemory(void* address, size_t amount) {
-    ByteVector ret;
-    for (size_t i = 0; i < amount; i++) {
-        ret.push_back(*reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(address) + i));
+Result<Patch*> Mod::Impl::claimPatch(std::shared_ptr<Patch> patch) {
+    auto res1 = patch->m_impl->setOwner(m_self);
+    if (!res1) {
+        return Err("Cannot claim patch: {}", res1.unwrapErr());
     }
-    return ret;
+
+    m_patches.push_back(patch);
+
+    auto ptr = patch.get();
+    if (!this->isEnabled() || !patch->getAutoEnable())
+        return Ok(ptr);
+
+    auto res2 = ptr->enable();
+    if (!res2) {
+        return Err("Cannot enable patch: {}", res2.unwrapErr());
+    }
+
+    return Ok(ptr);
 }
 
-Result<Patch*> Mod::Impl::patch(void* address, ByteVector const& data) {
-    auto p = new Patch;
-    p->m_address = address;
-    p->m_original = readMemory(address, data.size());
-    p->m_owner = m_self;
-    p->m_patch = data;
-    if (!p->apply()) {
-        delete p;
-        return Err("Unable to enable patch at " + std::to_string(p->getAddress()));
+Result<> Mod::Impl::disownPatch(Patch* patch) {
+    if (patch->getOwner() != m_self) {
+        return Err("Cannot disown patch not owned by this mod");
     }
-    m_patches.push_back(p);
-    return Ok(p);
-}
 
-Result<> Mod::Impl::unpatch(Patch* patch) {
-    if (patch->restore()) {
-        ranges::remove(m_patches, patch);
-        delete patch;
-        return Ok();
+    auto res1 = patch->m_impl->setOwner(nullptr);
+    if (!res1) {
+        return Err("Cannot disown patch: {}", res1.unwrapErr());
     }
-    return Err("Unable to restore patch!");
+
+    auto foundIt = std::find_if(m_patches.begin(), m_patches.end(), [&](auto& a) {
+        return a.get() == patch;
+    });
+    if (foundIt == m_patches.end())
+        return Err("WEE, WOO !! Something just went horribly wrong! "
+                   "A patch that was getting disowned had its owner set but the owner "
+                   "didn't have the patch in m_patches.");
+
+
+    if (this->isEnabled() && patch->getAutoEnable()) {
+        auto res2 = patch->disable();
+        if (!res2) {
+            return Err("Cannot disable patch: {}", res2.unwrapErr());
+        }
+    }
+
+    m_patches.erase(foundIt);
+
+    return Ok();
 }
 
 // Misc.
@@ -605,6 +609,11 @@ Result<> Mod::Impl::createTempDir() {
         return Ok();
     }
 
+    // If the info doesn't specify a path, don't do anything
+    if (m_metadata.getPath().string().empty()) {
+        return Ok();
+    }
+
     // Create geode/temp
     auto tempDir = dirs::getModRuntimeDir();
     if (!file::createDirectoryAll(tempDir)) {
@@ -612,19 +621,10 @@ Result<> Mod::Impl::createTempDir() {
     }
 
     // Create geode/temp/mod.id
-    auto tempPath = tempDir / m_info.id();
+    auto tempPath = tempDir / m_metadata.getID();
     if (!file::createDirectoryAll(tempPath)) {
         return Err("Unable to create mod runtime directory");
     }
-
-    // Unzip .geode file into temp dir
-    GEODE_UNWRAP_INTO(auto unzip, file::Unzip::create(m_info.path()));
-    if (!unzip.hasEntry(m_info.binaryName())) {
-        return Err(
-            fmt::format("Unable to find platform binary under the name \"{}\"", m_info.binaryName())
-        );
-    }
-    GEODE_UNWRAP(unzip.extractAllTo(tempPath));
 
     // Mark temp dir creation as succesful
     m_tempDirName = tempPath;
@@ -632,41 +632,48 @@ Result<> Mod::Impl::createTempDir() {
     return Ok();
 }
 
-ghc::filesystem::path Mod::Impl::getConfigDir(bool create) const {
-    auto dir = dirs::getModConfigDir() / m_info.id();
+std::filesystem::path Mod::Impl::getConfigDir(bool create) const {
+    auto dir = dirs::getModConfigDir() / m_metadata.getID();
     if (create) {
         (void)file::createDirectoryAll(dir);
     }
     return dir;
 }
 
-char const* Mod::Impl::expandSpriteName(char const* name) {
-    static std::unordered_map<std::string, char const*> expanded = {};
-    if (expanded.count(name)) return expanded[name];
+std::filesystem::path Mod::Impl::getPersistentDir(bool create) const {
+    auto dir = dirs::getModPersistentDir() / m_metadata.getID();
+    if (create) {
+        (void)file::createDirectoryAll(dir);
+    }
+    return dir;
+}
 
-    auto exp = new char[strlen(name) + 2 + m_info.id().size()];
-    auto exps = m_info.id() + "/" + name;
+std::string_view Mod::Impl::expandSpriteName(std::string_view name) {
+    std::string nameKey(name);
+    if (m_expandedSprites.contains(nameKey)) return m_expandedSprites[nameKey];
+
+    auto exp = new char[name.size() + 2 + m_metadata.getID().size()];
+    auto exps = (m_metadata.getID() + "/") + name.data();
     memcpy(exp, exps.c_str(), exps.size() + 1);
 
-    expanded[name] = exp;
+    m_expandedSprites[nameKey] = exp;
 
     return exp;
 }
 
 ModJson Mod::Impl::getRuntimeInfo() const {
-    auto json = m_info.toJSON();
+    auto json = m_metadata.toJSON();
 
-    auto obj = json::Object();
-    obj["hooks"] = json::Array();
+    auto obj = matjson::Value::object();
+    obj["hooks"] = matjson::Value::array();
     for (auto hook : m_hooks) {
-        obj["hooks"].as_array().push_back(ModJson(hook->getRuntimeInfo()));
+        obj["hooks"].push(ModJson(hook->getRuntimeInfo()));
     }
-    obj["patches"] = json::Array();
+    obj["patches"] = matjson::Value::array();
     for (auto patch : m_patches) {
-        obj["patches"].as_array().push_back(ModJson(patch->getRuntimeInfo()));
+        obj["patches"].push(ModJson(patch->getRuntimeInfo()));
     }
-    obj["enabled"] = m_enabled;
-    obj["loaded"] = m_binaryLoaded;
+    obj["loaded"] = m_enabled;
     obj["temp-dir"] = this->getTempDir();
     obj["save-dir"] = this->getSaveDir();
     obj["config-dir"] = this->getConfigDir(false);
@@ -675,46 +682,83 @@ ModJson Mod::Impl::getRuntimeInfo() const {
     return json;
 }
 
-static Result<ModInfo> getModImplInfo() {
-    std::string err;
-    json::Value json;
-    try {
-        json = json::parse(LOADER_MOD_JSON);
-    } catch (std::exception& err) {
-        return Err("Unable to parse mod.json: " + std::string(err.what()));
-    }
+bool Mod::Impl::isLoggingEnabled() const {
+    return m_loggingEnabled;
+}
 
-    GEODE_UNWRAP_INTO(auto info, ModInfo::create(json));
-    info.supportsDisabling() = false;
+void Mod::Impl::setLoggingEnabled(bool enabled) {
+    m_loggingEnabled = enabled;
+}
+
+Severity Mod::Impl::getLogLevel() const {
+    return m_logLevel;
+}
+
+void Mod::Impl::setLogLevel(Severity level) {
+    m_logLevel = level;
+}
+
+bool Mod::Impl::shouldLoad() const {
+    return Mod::get()->getSavedValue<bool>("should-load-" + m_metadata.getID(), true) || this->isInternal();
+}
+
+bool Mod::Impl::isCurrentlyLoading() const {
+    return m_isCurrentlyLoading;
+}
+
+bool Mod::Impl::hasLoadProblems() const {
+    for (auto const& problem : m_problems) {
+        if (problem.isProblem()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<LoadProblem> Mod::Impl::getProblems() const {
+    return m_problems;
+}
+
+static Result<ModMetadata> getModImplInfo() {
+    auto json = GEODE_UNWRAP(matjson::parse(about::getLoaderModJson()).mapErr([](auto&& err) {
+        return fmt::format("Unable to parse mod.json: {}", err);
+    }));
+
+    GEODE_UNWRAP_INTO(auto info, ModMetadata::create(json));
     return Ok(info);
 }
 
-Mod* Loader::Impl::createInternalMod() {
+Mod* Loader::Impl::getInternalMod() {
     auto& mod = Mod::sharedMod<>;
-    if (!mod) {
-        auto infoRes = getModImplInfo();
-        if (!infoRes) {
-            LoaderImpl::get()->platformMessageBox(
-                "Fatal Internal Error",
-                "Unable to create internal mod info: \"" + infoRes.unwrapErr() +
-                    "\"\n"
-                    "This is a fatal internal error in the loader, please "
-                    "contact Geode developers immediately!"
-            );
-            auto info = ModInfo();
-            info.id() = "geode.loader";
-            mod = new Mod(info);
-        }
-        else {
-            mod = new Mod(infoRes.unwrap());
-        }
-        mod->m_impl->m_binaryLoaded = true;
-        mod->m_impl->m_enabled = true;
-        m_mods.insert({ mod->getID(), mod });
+    if (mod)
+        return mod;
+    if (m_mods.contains("geode.loader")) {
+        log::warn("Something went wrong and Mod::sharedMod<> got unset after the internal mod was created! Setting sharedMod back...");
+        mod = m_mods["geode.loader"];
+        return mod;
     }
+    auto infoRes = getModImplInfo();
+    if (!infoRes) {
+        console::messageBox(
+            "Fatal Internal Error",
+            "Unable to create internal mod info: \"" + infoRes.unwrapErr() +
+                "\"\n"
+                "This is a fatal internal error in the loader, please "
+                "contact Geode developers immediately!"
+        );
+        mod = new Mod(ModMetadata("geode.loader"));
+    }
+    else {
+        mod = new Mod(infoRes.unwrap());
+    }
+    mod->m_impl->m_enabled = true;
+    m_mods.insert({ mod->getID(), mod });
     return mod;
 }
 
 Result<> Loader::Impl::setupInternalMod() {
-    return Mod::get()->m_impl->setup();
+    GEODE_UNWRAP(Mod::get()->m_impl->setup());
+    // auto resourcesDir = dirs::getGeodeResourcesDir() / Mod::get()->getID();
+    GEODE_UNWRAP(ModMetadataImpl::getImpl(ModImpl::get()->m_metadata).addSpecialFilesFromResources());
+    return Ok();
 }

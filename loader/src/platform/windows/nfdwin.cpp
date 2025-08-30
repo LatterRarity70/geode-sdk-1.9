@@ -1,10 +1,9 @@
 #include "nfdwin.hpp"
 #include <Geode/utils/string.hpp>
+#include <algorithm>
 
-#ifdef GEODE_IS_WINDOWS
-
-using Path = ghc::filesystem::path;
-using Paths = std::vector<ghc::filesystem::path>;
+using Path = std::filesystem::path;
+using Paths = std::vector<std::filesystem::path>;
 
 static BOOL COMIsInitialized(HRESULT coResult) {
     if (coResult == RPC_E_CHANGED_MODE) {
@@ -84,7 +83,7 @@ static Result<Paths> convShellItems(IShellItemArray* shellItems) {
         return Err("Unable to get shell item count");
     }
 
-    std::vector<ghc::filesystem::path> paths;
+    std::vector<std::filesystem::path> paths;
     for (DWORD i = 0; i < shellItemCount; i++) {
         IShellItem* shellItem;
         if (!SUCCEEDED(shellItems->GetItemAt(i, &shellItem))) {
@@ -111,7 +110,7 @@ static Result<Paths> convShellItems(IShellItemArray* shellItems) {
 
 static bool setDefaultPath(
     IFileDialog* dialog,
-    ghc::filesystem::path const& defaultPath
+    std::filesystem::path const& defaultPath
 ) {
     IShellItem* folder;
     if (!SUCCEEDED(SHCreateItemFromParsingName(
@@ -127,7 +126,7 @@ static bool setDefaultPath(
 
 static bool setDefaultFile(
     IFileDialog* dialog,
-    ghc::filesystem::path const& fileName
+    std::filesystem::path const& fileName
 ) {
     dialog->SetFileName(fileName.wstring().c_str());
     return true;
@@ -148,7 +147,7 @@ Result<> nfdPick(
     void* result
 ) {
     auto coResult = COMInit();
-    if (!COMIsInitialized(coResult)) {        
+    if (!COMIsInitialized(coResult)) {
         return Err("Could not initialize COM");
     }
 
@@ -182,9 +181,10 @@ Result<> nfdPick(
         return Err("Unable to add filters to dialog");
     }
     if (options.defaultPath && options.defaultPath.value().wstring().size()) {
-        ghc::filesystem::path path = options.defaultPath.value();
+        std::filesystem::path path = options.defaultPath.value();
+        path.make_preferred();
         if (mode == NFDMode::OpenFile || mode == NFDMode::SaveFile) {
-            if (!ghc::filesystem::exists(path) || !ghc::filesystem::is_directory(path)) {
+            if (!std::filesystem::exists(path) || !std::filesystem::is_directory(path)) {
                 if (path.has_filename()) {
                     setDefaultFile(dialog, path.filename());
                 }
@@ -224,7 +224,13 @@ Result<> nfdPick(
         }
     }
 
-    switch (dialog->Show(nullptr)) {
+    auto fgWindow = GetForegroundWindow();
+    auto taskbar = FindWindow("Shell_TrayWnd", NULL);
+    SetForegroundWindow(taskbar);
+    auto dialogResult = dialog->Show(fgWindow);
+    ShowWindow(fgWindow, SW_RESTORE);
+
+    switch (dialogResult) {
         case S_OK: {
             switch (mode) {
                 case NFDMode::OpenFile:
@@ -296,5 +302,3 @@ Result<> nfdPick(
 
     return Err("Unknown error");
 }
-
-#endif

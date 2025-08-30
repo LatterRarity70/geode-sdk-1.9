@@ -14,13 +14,13 @@ namespace geode {
     protected:
         std::vector<T> m_list;
         size_t m_index = 0;
-        utils::MiniFunction<void(T const&, size_t)> m_onChange;
+        std::function<void(T const&, size_t)> m_onChange;
         cocos2d::CCLabelBMFont* m_label;
         CCMenuItemSpriteExtra* m_prevBtn;
         CCMenuItemSpriteExtra* m_nextBtn;
 
         bool init(
-            float width, std::vector<T> const& list, utils::MiniFunction<void(T const&, size_t)> onChange
+            float width, std::vector<T> const& list, std::function<void(T const&, size_t)> onChange
         ) {
             if (!cocos2d::CCMenu::init()) return false;
 
@@ -51,8 +51,7 @@ namespace geode {
 
             this->updateLabel();
 
-            cocos2d::CCDirector::sharedDirector()->getTouchDispatcher()->incrementForcePrio(2);
-            this->registerWithTouchDispatcher();
+            this->setTouchEnabled(true);
 
             return true;
         }
@@ -95,14 +94,14 @@ namespace geode {
 
     public:
         static SelectList* create(
-            float width, std::vector<T> const& list, utils::MiniFunction<void(T const&, size_t)> onChange
+            float width, std::vector<T> const& list, std::function<void(T const&, size_t)> onChange
         ) {
             auto ret = new SelectList();
-            if (ret && ret->init(width, list, onChange)) {
+            if (ret->init(width, list, onChange)) {
                 ret->autorelease();
                 return ret;
             }
-            CC_SAFE_DELETE(ret);
+            delete ret;
             return nullptr;
         }
 

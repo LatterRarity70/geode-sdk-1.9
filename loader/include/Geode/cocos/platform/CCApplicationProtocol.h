@@ -76,16 +76,18 @@ public:
     */
     virtual void applicationWillEnterForeground() {}
 
-    RT_ADD(
-        virtual void applicationWillBecomeActive() {}
-        virtual void applicationWillResignActive() {}
-        virtual void trySaveGame() {}
-        virtual void gameDidSave() {}
-    )
+    // @note RobTop Addition
+    virtual void applicationWillBecomeActive() {}
+    // @note RobTop Addition
+    virtual void applicationWillResignActive() {}
+    // @note RobTop Addition
+    virtual void trySaveGame() {}
+    // @note RobTop Addition
+    virtual void gameDidSave() {}
 
     /**
     @brief    Callback by CCDirector for limit FPS.
-    @interval       The time, expressed in seconds, between current frame and next. 
+    @interval       The time, expressed in seconds, between current frame and next.
     */
     virtual void setAnimationInterval(double interval) {}
 
@@ -94,13 +96,14 @@ public:
     @return Current language config
     */
     virtual ccLanguageType getCurrentLanguage() { return kLanguageEnglish; }
-    
+
     /**
      @brief Get target platform
      */
     virtual TargetPlatform getTargetPlatform() { return kTargetWindows; }
 
-    RT_ADD( virtual void openURL(const char* url) {} )
+    // @note RobTop Addition
+    virtual void openURL(const char* url) {}
 };
 
 // end of platform group

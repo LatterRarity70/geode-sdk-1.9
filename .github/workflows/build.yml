@@ -2,145 +2,358 @@ name: Build Binaries
 
 on:
   workflow_dispatch:
+    inputs:
+      build-debug-info:
+        description: 'Profile and debug the build process'
+        required: false
+        default: false
+        type: boolean
+      use-ccache:
+        description: 'Enable ccache/sccache'
+        required: false
+        default: true
+        type: boolean
+  pull_request:
   push:
     branches:
     - '**'              # every branch
     - '!no-build-**'    # unless marked as no-build
 
+env:
+  CPM_SOURCE_CACHE: ${{ github.workspace }}/cpm-cache
+  base-configure-command: >-
+    cmake -B build
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    -DGEODE_CODEGEN_CMAKE_ARGS="-DCMAKE_C_COMPILER=clang;-DCMAKE_CXX_COMPILER=clang++;-G Ninja"
+    -G Ninja
+  base-build-command: |
+    cmake --build build --config RelWithDebInfo --parallel
+    rm bin/nightly/resources/.geode_cache
+
 jobs:
-  build:
+  build-windows:
+    name: Build Windows
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Prepare for Build Debug Info
+      id: build-debug-info
+      uses: ./.github/actions/build-debug-info
+      with:
+        has-sccache: ${{ inputs.use-ccache }}
+      if: inputs.build-debug-info
+
+    - name: Setup caches
+      uses: ./.github/actions/setup-cache
+      with:
+        host: linux
+        target: win
+        use-ccache: ${{ github.event_name != 'workflow_dispatch' || inputs.use-ccache }}
+
+    - name: Setup Ninja
+      uses: ./.github/actions/setup-ninja
+      with:
+        host: linux
+
+    - name: Setup CLI
+      uses: geode-sdk/cli/.github/actions/setup@main
+
+    - name: Download xwin
+      uses: robinraju/release-downloader@v1.10
+      with:
+        repository: Jake-Shadle/xwin
+        latest: true
+        fileName: 'xwin-*-x86_64-unknown-linux-musl.tar.gz'
+        tarBall: false
+        zipBall: false
+        out-file-path: "epic-xwin"
+
+    - name: Prepare xwin
+      run: |
+        tar -xzf epic-xwin/xwin-*-x86_64-unknown-linux-musl.tar.gz -C epic-xwin
+        mv epic-xwin/xwin-*-x86_64-unknown-linux-musl/xwin ./xwin
+        ./xwin --arch x86 --sdk-version 10.0.22621 --accept-license list
+
+    # this caches '.xwin-cache/**/*' but that's actually only gonna
+    # contain the manifest cuz we only ran `xwin list` so far
+    - name: Setup xwin Cache
+      id: xwin-cache
+      uses: actions/cache@v4
+      with:
+        path: .xwin-cache
+        key: xwin-win-v1-${{ hashFiles('.xwin-cache/**/*') }}
+
+    - name: Download Windows headers
+      run: ./xwin --arch x86 --sdk-version 10.0.22621 --accept-license splat --include-debug-libs
+      if: steps.xwin-cache.outputs.cache-hit != 'true'
+
+    - name: Download clang-msvc-sdk toolchain
+      uses: actions/checkout@v4
+      with:
+        repository: 'geode-sdk/clang-msvc-sdk'
+        path: toolchain
+        submodules: recursive
+
+    - name: Install Clang 19
+      run: |
+        sudo rm -f /var/lib/man-db/auto-update
+        sudo apt install -y clang-19 clang-tools-19 lld-19
+
+    - name: Configure
+      run: ${{ env.base-configure-command }} -DCMAKE_TOOLCHAIN_FILE=$TOOLCHAIN ${{ steps.build-debug-info.outputs.extra-configure }}
+      env:
+        SPLAT_DIR: ${{ github.workspace }}/.xwin-cache/splat
+        TOOLCHAIN: ${{ github.workspace }}/toolchain/clang-cl-msvc.cmake
+        HOST_ARCH: x86
+        CLANG_VER: 19
+        LLVM_VER: 19
+
+    - name: Build
+      run: |
+        ${{ env.base-build-command }}
+        ${{ steps.build-debug-info.outputs.extra-build }}
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: geode-win
+        path: ./bin/nightly
+
+    - name: Package Installer
+      run: |
+        sudo apt install nsis
+        makensis -WX -V3 ./installer/windows/installer.nsi
+
+    - name: Upload Installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: geode-installer-win
+        path: './installer/windows/geode-installer-win.exe'
+
+    - name: Complete Build Debug Info
+      uses: ./.github/actions/build-debug-info-post
+      with:
+        target: win
+      if: inputs.build-debug-info && (success() || failure())
+
+  # build-mac:
+  #   name: Build macOS
+  #   runs-on: macos-latest
+
+  #   env:
+  #    SCCACHE_CACHE_MULTIARCH: 1
+
+  #   steps:
+  #   - name: Checkout
+  #     uses: actions/checkout@v4
+  #     with:
+  #       submodules: recursive
+
+  #   - name: Prepare for Build Debug Info
+  #     id: build-debug-info
+  #     uses: ./.github/actions/build-debug-info
+  #     with:
+  #       has-sccache: ${{ inputs.use-ccache }}
+  #     if: inputs.build-debug-info
+
+    # due to very strange performance issues, sccache is currently disabled for macos. sorry
+
+    # - name: Setup caches
+    #   uses: ./.github/actions/setup-cache
+    #   with:
+    #     host: mac
+    #     target: mac
+    #     use-ccache: ${{ github.event_name != 'workflow_dispatch' || inputs.use-ccache }}
+
+  #   - name: Setup Ninja
+  #     uses: ./.github/actions/setup-ninja
+  #     with:
+  #       host: mac
+
+  #   - name: Setup CLI
+  #     uses: geode-sdk/cli/.github/actions/setup@main
+
+  #   - name: Configure
+  #     run: >
+  #       ${{ env.base-configure-command }}
+  #       -DCMAKE_C_COMPILER=clang
+  #       -DCMAKE_CXX_COMPILER=clang++
+  #       -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15
+  #       -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+  #       -DGEODE_DISABLE_PRECOMPILED_HEADERS=OFF
+  #       ${{ steps.build-debug-info.outputs.extra-configure }}
+
+  #   - name: Build
+  #     run: |
+  #       ${{ env.base-build-command }}
+  #       ${{ steps.build-debug-info.outputs.extra-build }}
+
+  #   - name: Upload Artifacts
+  #     uses: actions/upload-artifact@v4
+  #     with:
+  #       name: geode-mac
+  #       path: ./bin/nightly
+
+  #   - name: Package Installer
+  #     run: ./installer/mac/package.sh ./bin/nightly ./installer/mac/geode-installer-mac.pkg
+
+  #   - name: Upload Installer
+  #     uses: actions/upload-artifact@v4
+  #     with:
+  #       name: geode-installer-mac
+  #       path: './installer/mac/geode-installer-mac.pkg'
+
+  #   - name: Complete Build Debug Info
+  #     uses: ./.github/actions/build-debug-info-post
+  #     with:
+  #       target: mac
+  #     if: inputs.build-debug-info && (success() || failure())
+
+  build-android:
     strategy:
       fail-fast: false
       matrix:
         config:
-        - name: "Windows"
-          os_identifier: "win"
-          os: windows-2019
-          prefixes: ''
-          extra_flags: '-T host=x86 -A win32 -DGEODE_DEBUG=On'
-          out_paths: './bin/nightly/Geode.pdb ./bin/nightly/Geode.dll ./bin/nightly/GeodeBootstrapper.dll ./bin/nightly/Geode.lib ./bin/nightly/XInput9_1_0.dll'
-          cli_cmd: ''
+        - name: Android (32-bit)
+          id: android32
+          extra-configure: -DANDROID_ABI=armeabi-v7a
 
-        - name: "macOS"
-          os_identifier: "mac"
-          os: macos-latest
-          prefixes: 'PATH="/usr/local/opt/ccache/libexec:$PATH"'
-          extra_flags: "-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Debug -DGEODE_DEBUG=On -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13"
-          out_paths: './bin/nightly/Geode.dylib ./bin/nightly/GeodeBootstrapper.dylib ./loader/include/link/libfmod.dylib'
-          cli_cmd: 'chmod +x $GITHUB_WORKSPACE/cli/geode'
-          
-    name: ${{ matrix.config.name }}
-    runs-on: ${{ matrix.config.os }}
+    name: Build ${{ matrix.config.name }}
+    runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - name: Checkout
+      uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    - uses: ilammy/msvc-dev-cmd@v1
+    - name: Prepare for Build Debug Info
+      id: build-debug-info
+      uses: ./.github/actions/build-debug-info
       with:
-        arch: x86
-      if: matrix.config.os_identifier == 'win'
+        has-sccache: ${{ inputs.use-ccache }}
+      if: inputs.build-debug-info
 
-    - name: Configure ccache
-      uses: hendrikmuhs/ccache-action@v1.2
+    - name: Setup caches
+      uses: ./.github/actions/setup-cache
       with:
-        key: ${{ matrix.config.os }}
+        host: linux
+        target: ${{ matrix.config.id }}
+        use-ccache: ${{ github.event_name != 'workflow_dispatch' || inputs.use-ccache }}
 
-    - name: Download CLI
-      uses: robinraju/release-downloader@v1.5
+    - name: Setup Ninja
+      uses: ./.github/actions/setup-ninja
       with:
-        repository: geode-sdk/cli
-        latest: true
-        fileName: "*-${{ matrix.config.os_identifier }}.zip"
-        tarBall: false
-        zipBall: false
-        out-file-path: "cli" 
-    
-    - name: Unzip CLI
-      run: |
-        7z x "${{ github.workspace }}/cli/*-${{ matrix.config.os_identifier }}.zip" -o"${{ github.workspace }}/cli"
-    
-    - name: Add CLI to Path
-      run: |
-        ${{ matrix.config.cli_cmd }}
-        echo "${{ github.workspace }}/cli" >> $GITHUB_PATH
+        host: linux
 
-    - name: Configure CMake
+    - name: Setup CLI
+      uses: geode-sdk/cli/.github/actions/setup@main
+
+    - name: Setup Breakpad Tools
+      uses: ./.github/actions/setup-dump-sym
+      id: breakpad-tools
+
+    - name: Configure
       run: >
-        ${{ matrix.config.prefixes }} cmake -B 
-        ${{ github.workspace }}/build 
-        ${{ matrix.config.extra_flags }} 
-        -DCLI_PATH="${{ github.workspace }}/cli" 
-        -D CMAKE_C_COMPILER_LAUNCHER=ccache
-        -D CMAKE_CXX_COMPILER_LAUNCHER=ccache
+        ${{ env.base-configure-command }}
+        -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake
+        -DCMAKE_C_COMPILER=clang
+        -DCMAKE_CXX_COMPILER=clang++
+        -DANDROID_PLATFORM=android-23
+        -DANDROID_STL=c++_shared
+        ${{ matrix.config.extra-configure }}
+        ${{ steps.build-debug-info.outputs.extra-configure }}
 
     - name: Build
       run: |
-        cd build
-        cmake --build . --config RelWithDebInfo --parallel
+        ${{ env.base-build-command }}
+        ${{ steps.build-debug-info.outputs.extra-build }}
 
-    - name: Move to output folder
-      shell: bash
-      working-directory: ${{ github.workspace }}
+    # hardcoding toolchain path :(
+    - name: Dump Symbols
       run: |
-        mkdir ./out
-        mv ${{ matrix.config.out_paths }} ./out
-    
-    - name: Get version
-      uses: juliangruber/read-file-action@v1.1.6
-      with:
-        path: ${{ github.workspace }}/VERSION
-      id: version
-
-    - name: Delete resource cache file
-      run: |
-        rm ./bin/nightly/resources/.geode_cache
-    - name: Upload resources
-      uses: actions/upload-artifact@v2
-      with:
-        name: resources
-        path: ./bin/nightly/resources
-      if: matrix.config.os_identifier == 'win'
+        ${{ steps.breakpad-tools.outputs.binary-path }} ./bin/nightly/libgeode.so -o ./bin/nightly/libgeode.so.sym
+        $ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip ./bin/nightly/libgeode.so
 
     - name: Upload Artifacts
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v4
       with:
-        name: geode-v${{ steps.version.outputs.content }}-${{ matrix.config.os_identifier }}
-        path: ./out
+        name: geode-${{ matrix.config.id }}
+        path: ./bin/nightly
+
+    - name: Complete Build Debug Info
+      uses: ./.github/actions/build-debug-info-post
+      with:
+        target: ${{ matrix.config.id }}
+      if: inputs.build-debug-info && (success() || failure())
 
   publish:
+    name: Publish
     runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main'
+    needs: [ build-windows, build-android ]
+    if: github.ref == 'refs/heads/gdps'
     steps:
-      - uses: actions/checkout@v2
-      
-      - name: Get version
-        uses: juliangruber/read-file-action@v1.1.6
-        with:
-          path: ${{ github.workspace }}/VERSION
-        id: version
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v3
-        with:
-          path: ${{ github.workspace }}
+      - name: Declare Version Variables
+        id: ref
+        run: |
+          echo "version=$(cat VERSION | xargs)" >> $GITHUB_OUTPUT
+          echo "hash=$(git rev-parse --short "$GITHUB_SHA")" >> $GITHUB_OUTPUT
 
-      - uses: vimtor/action-zip@v1
-        with:
-          files: geode-v${{ steps.version.outputs.content }}-mac/Geode.dylib geode-v${{ steps.version.outputs.content }}-mac/GeodeBootstrapper.dylib
-          dest: geode-nightly-mac.zip
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
 
-      - uses: vimtor/action-zip@v1
-        with:
-          files: geode-v${{ steps.version.outputs.content }}-win/Geode.dll geode-v${{ steps.version.outputs.content }}-win/GeodeBootstrapper.dll geode-v${{ steps.version.outputs.content }}-win/Geode.lib
-          dest: geode-nightly-win.zip
+      - name: Move Installers
+        run: |
+          mv geode-installer-win/geode-installer-win.exe geode-installer-${{ steps.ref.outputs.hash }}-win.exe
+          mv ./installer/linux/install.sh geode-installer-${{ steps.ref.outputs.hash }}-linux.sh
 
-      - name: Update release
-        uses: IsaacShelton/update-existing-release@v1.3.1
+      #   mv geode-installer-mac/geode-installer-mac.pkg geode-installer-${{ steps.ref.outputs.hash }}-mac.pkg
+
+
+      # - name: Zip MacOS Artifacts
+      #  uses: vimtor/action-zip@v1.2
+      #  with:
+      #    files: geode-mac/Geode.dylib geode-mac/GeodeBootstrapper.dylib
+      #    dest: geode-${{ steps.ref.outputs.hash }}-mac.zip
+
+      - name: Zip Windows Artifacts
+        uses: vimtor/action-zip@v1.2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          files: ./geode-nightly-mac.zip ./geode-nightly-win.zip
-          release: nightly
-          tag: nightly
-          prerelease: true
+          files: geode-win/XInput9_1_0.dll geode-win/Geode.dll geode-win/GeodeUpdater.exe geode-win/Geode.lib geode-win/Geode.pdb
+          dest: geode-${{ steps.ref.outputs.hash }}-win.zip
+
+      - name: Zip Android32 Artifacts
+        uses: vimtor/action-zip@v1.2
+        with:
+          files: geode-android32/libgeode.so geode-android32/libgeode.so.sym
+          dest: geode-${{ steps.ref.outputs.hash }}-android32.zip
+
+      - name: Zip Resources
+        uses: vimtor/action-zip@v1.2
+        with:
+          files: geode-android32/resources
+          dest: resources.zip
+
+      - name: Update Development Release
+        uses: andelf/nightly-release@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: nightly
+          name: 'Development Release'
+          body: |
+            Geode development release for commit ${{ github.sha }}. Since this is not a regular release, Geode will not install the resources automatically, so you should use the installer if you want them.
+          files: |
+            ./geode-installer-${{ steps.ref.outputs.hash }}-win.exe
+            ./geode-installer-${{ steps.ref.outputs.hash }}-linux.sh
+            ./geode-${{ steps.ref.outputs.hash }}-win.zip
+            ./geode-${{ steps.ref.outputs.hash }}-android32.zip
+            ./resources.zip

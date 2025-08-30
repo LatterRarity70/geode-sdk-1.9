@@ -1,13 +1,26 @@
+/*
 #include <Geode/binding/ProfilePage.hpp>
+*/
+#include <Geode/binding/LevelTools.hpp>
+#include <Geode/binding/LevelInfoLayer.hpp>
 #include <Geode/binding/CCContentLayer.hpp>
+#include <Geode/binding/GJSearchObject.hpp>
+#include <Geode/binding/LevelBrowserLayer.hpp>
 #include <Geode/loader/Mod.hpp>
+#include <Geode/loader/Loader.hpp>
 #include <Geode/ui/MDTextArea.hpp>
+#include <Geode/ui/BreakLine.hpp>
 #include <Geode/utils/casts.hpp>
 #include <Geode/utils/cocos.hpp>
 #include <Geode/utils/web.hpp>
 #include <Geode/utils/ranges.hpp>
 #include <Geode/utils/string.hpp>
 #include <md4c.h>
+#include <charconv>
+#include <Geode/loader/Log.hpp>
+#include <Geode/ui/GeodeUI.hpp>
+#include <server/Server.hpp>
+#include <regex>
 
 using namespace geode::prelude;
 
@@ -15,7 +28,7 @@ static constexpr float g_fontScale = .5f;
 static constexpr float g_paragraphPadding = 7.f;
 static constexpr float g_indent = 7.f;
 static constexpr float g_codeBlockIndent = 8.f;
-static constexpr ccColor3B g_linkColor = cc3x(0x7ff4f4);
+static constexpr ccColor3B g_linkColor = {0x7f, 0xf4, 0xf4};
 
 TextRenderer::Font g_mdFont = [](int style) -> TextRenderer::Label {
     if ((style & TextStyleBold) && (style & TextStyleItalic)) {
@@ -41,12 +54,12 @@ protected:
 public:
     static MDContentLayer* create(CCMenu* content, float width, float height) {
         auto ret = new MDContentLayer();
-        if (ret && ret->initWithColor({ 0, 255, 0, 0 }, width, height)) {
+        if (ret->initWithColor({ 0, 255, 0, 0 }, width, height)) {
             ret->m_content = content;
             ret->autorelease();
             return ret;
         }
-        CC_SAFE_DELETE(ret);
+        delete ret;
         return nullptr;
     }
 
@@ -58,7 +71,7 @@ public:
         // so that's why based MDContentLayer expects itself
         // to have a CCMenu :-)
         if (m_content) {
-            for (auto child : CCArrayExt<CCNode>(m_content->getChildren())) {
+            for (auto child : CCArrayExt<CCNode*>(m_content->getChildren())) {
                 auto y = this->getPositionY() + child->getPositionY();
                 child->setVisible(
                     !((m_content->getContentSize().height < y) ||
@@ -70,15 +83,12 @@ public:
 };
 
 Result<ccColor3B> colorForIdentifier(std::string const& tag) {
-    if (utils::string::contains(tag, ' ')) {
-        auto hexStr = utils::string::split(utils::string::normalize(tag), " ").at(1);
-        try {
-            auto hex = std::stoi(hexStr, nullptr, 16);
-            return Ok(cc3x(hex));
-        }
-        catch (...) {
-            return Err("Invalid hex");
-        }
+    if (tag.length() > 2 && tag[1] == '-') {
+        return cc3bFromHexString(tag.substr(2));
+    }
+    // Support the old form of <carbitaryletters hex>
+    else if (tag.find(' ') != std::string::npos) {
+        return cc3bFromHexString(string::trim(tag.substr(tag.find(' ') + 1)));
     }
     else {
         auto colorText = tag.substr(1);
@@ -90,14 +100,19 @@ Result<ccColor3B> colorForIdentifier(std::string const& tag) {
         }
         else {
             switch (colorText.front()) {
-                case 'b': return Ok(cc3x(0x4a52e1)); break;
-                case 'g': return Ok(cc3x(0x40e348)); break;
-                case 'l': return Ok(cc3x(0x60abef)); break;
-                case 'j': return Ok(cc3x(0x32c8ff)); break;
-                case 'y': return Ok(cc3x(0xffff00)); break;
-                case 'o': return Ok(cc3x(0xffa54b)); break;
-                case 'r': return Ok(cc3x(0xff5a5a)); break;
-                case 'p': return Ok(cc3x(0xff00ff)); break;
+                case 'a': return Ok(ccc3(150, 50, 255)); break;
+                case 'b': return Ok(ccc3(74, 82, 225)); break;
+                case 'c': return Ok(ccc3(255, 255, 150)); break;
+                case 'd': return Ok(ccc3(255, 150, 255)); break;
+                case 'f': return Ok(ccc3(150, 255, 255)); break;
+                case 'g': return Ok(ccc3(64, 227, 72)); break;
+                case 'j': return Ok(ccc3(50, 200, 255)); break;
+                case 'l': return Ok(ccc3(96, 171, 239)); break;
+                case 'o': return Ok(ccc3(255, 165, 75)); break;
+                case 'p': return Ok(ccc3(255, 0, 255)); break;
+                case 'r': return Ok(ccc3(255, 90, 90)); break;
+                case 's': return Ok(ccc3(255, 220, 65)); break;
+                case 'y': return Ok(ccc3(255, 255, 0)); break;
                 default: return Err("Unknown color " + colorText);
             }
         }
@@ -108,9 +123,12 @@ Result<ccColor3B> colorForIdentifier(std::string const& tag) {
 bool MDTextArea::init(std::string const& str, CCSize const& size) {
     if (!CCLayer::init()) return false;
 
+    this->ignoreAnchorPointForPosition(false);
+    this->setAnchorPoint({ .5f, .5f });
+
     m_text = str;
-    m_size = size;
-    this->setContentSize(size);
+    m_size = size - CCSize { 15.f, 0.f };
+    this->setContentSize(m_size);
     m_renderer = TextRenderer::create();
     CC_SAFE_RETAIN(m_renderer);
 
@@ -118,8 +136,8 @@ bool MDTextArea::init(std::string const& str, CCSize const& size) {
     m_bgSprite->setScale(.5f);
     m_bgSprite->setColor({ 0, 0, 0 });
     m_bgSprite->setOpacity(75);
-    m_bgSprite->setContentSize(size * 2 + CCSize { 25.f, 25.f });
-    m_bgSprite->setPosition(size / 2);
+    m_bgSprite->setContentSize(size * 2);
+    m_bgSprite->setPosition(m_size / 2);
     this->addChild(m_bgSprite);
 
     m_scrollLayer = ScrollLayer::create({ 0, 0, m_size.width, m_size.height }, true);
@@ -128,8 +146,7 @@ bool MDTextArea::init(std::string const& str, CCSize const& size) {
     m_content->setZOrder(2);
     m_scrollLayer->m_contentLayer->addChild(m_content);
 
-    CCDirector::sharedDirector()->getTouchDispatcher()->incrementForcePrio(2);
-    m_scrollLayer->registerWithTouchDispatcher();
+    m_scrollLayer->setTouchEnabled(true);
 
     this->addChild(m_scrollLayer);
 
@@ -142,35 +159,12 @@ MDTextArea::~MDTextArea() {
     CC_SAFE_RELEASE(m_renderer);
 }
 
-class BreakLine : public CCNode {
-protected:
-    void draw() override {
-        // some nodes sometimes set the blend func to
-        // something else without resetting it back
-        ccGLBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        ccDrawSolidRect({ 0, 0 }, this->getContentSize(), { 1.f, 1.f, 1.f, .2f });
-        CCNode::draw();
-    }
-
-public:
-    static BreakLine* create(float width) {
-        auto ret = new BreakLine;
-        if (ret && ret->init()) {
-            ret->autorelease();
-            ret->setContentSize({ width, 1.f });
-            return ret;
-        }
-        CC_SAFE_DELETE(ret);
-        return nullptr;
-    }
-};
-
 void MDTextArea::onLink(CCObject* pSender) {
-    auto href = as<CCString*>(as<CCNode*>(pSender)->getUserObject());
+    auto href = static_cast<CCString*>(static_cast<CCNode*>(pSender)->getUserObject());
     auto layer = FLAlertLayer::create(
         this, "Hold Up!",
-        "Links are spooky! Are you sure you want to go to <cy>" + std::string(href->getCString()) +
-            "</c>?",
+        ("Links are spooky! Are you sure you want to go to <cy>" + std::string(href->getCString()) +
+            "</c>?").c_str(),
         "Cancel", "Yes", 360.f
     );
     layer->setUserObject(href);
@@ -178,27 +172,54 @@ void MDTextArea::onLink(CCObject* pSender) {
 }
 
 void MDTextArea::onGDProfile(CCObject* pSender) {
-    auto href = as<CCString*>(as<CCNode*>(pSender)->getUserObject());
+/*
+    auto href = static_cast<CCString*>(static_cast<CCNode*>(pSender)->getUserObject());
     auto profile = std::string(href->getCString());
     profile = profile.substr(profile.find(":") + 1);
-    try {
-        ProfilePage::create(std::stoi(profile), false)->show();
-    }
-    catch (...) {
+    auto res = numFromString<int>(profile);
+    if (res.isErr()) {
         FLAlertLayer::create(
             "Error",
             "Invalid profile ID: <cr>" + profile +
                 "</c>. This is "
-                "probably the modder's fault, report the bug to them.",
+                "probably the mod developer's fault, report the bug to them.",
             "OK"
-        )
-            ->show();
+        )->show();
+        return;
     }
+    ProfilePage::create(id, false)->show();
+*/
+}
+
+void MDTextArea::onGDLevel(CCObject* pSender) {
+    auto href = static_cast<CCString*>(static_cast<CCNode*>(pSender)->getUserObject());
+    auto level = std::string(href->getCString());
+    level = level.substr(level.find(":") + 1);
+    auto res = numFromString<int>(level);
+    if (res.isErr()) {
+        FLAlertLayer::create(
+            "Error",
+            ("Invalid level ID: <cr>" + level +
+                "</c>. This is "
+                "probably the mod developers's fault, report the bug to them.").c_str(),
+            "OK"
+        )->show();
+        return;
+    }
+    auto searchObject = GJSearchObject::create(SearchType::Type19, fmt::format("{}&gameVersion=22", res.unwrap()));
+    auto scene = LevelBrowserLayer::scene(searchObject);
+    CCDirector::sharedDirector()->replaceScene(CCTransitionFade::create(0.5f, scene));
+}
+
+void MDTextArea::onGeodeMod(CCObject* sender) {
+    auto href = static_cast<CCString*>(static_cast<CCNode*>(sender)->getUserObject());
+    auto modID = std::string(href->getCString());
+    (void)openInfoPopup(modID.substr(modID.find(":") + 1));
 }
 
 void MDTextArea::FLAlert_Clicked(FLAlertLayer* layer, bool btn) {
     if (btn) {
-        web::openLinkInBrowser(as<CCString*>(layer->getUserObject())->getCString());
+        web::openLinkInBrowser(static_cast<CCString*>(layer->getUserObject())->getCString());
     }
 }
 
@@ -210,10 +231,16 @@ struct MDParser {
     static float s_codeStart;
     static size_t s_orderedListNum;
     static std::vector<TextRenderer::Label> s_codeSpans;
+    static bool s_breakListLine;
 
     static int parseText(MD_TEXTTYPE type, MD_CHAR const* rawText, MD_SIZE size, void* mdtextarea) {
         auto textarea = static_cast<MDTextArea*>(mdtextarea);
         auto renderer = textarea->m_renderer;
+        auto compatibilityMode = false;
+        if (auto boolObj = static_cast<CCBool*>(textarea->getUserObject("compatibilityMode"_spr))) {
+            compatibilityMode = boolObj->getValue();
+        }
+
         auto text = std::string(rawText, size);
         switch (type) {
             case MD_TEXTTYPE::MD_TEXT_CODE:
@@ -237,7 +264,7 @@ struct MDParser {
 
             case MD_TEXTTYPE::MD_TEXT_SOFTBR:
                 {
-                    renderer->breakLine();
+                    renderer->renderString(" ");
                 }
                 break;
 
@@ -250,7 +277,11 @@ struct MDParser {
                             text, textarea,
                             utils::string::startsWith(s_lastLink, "user:")
                                 ? menu_selector(MDTextArea::onGDProfile)
-                                : menu_selector(MDTextArea::onLink)
+                                : utils::string::startsWith(s_lastLink, "level:")
+                                    ? menu_selector(MDTextArea::onGDLevel)
+                                    : utils::string::startsWith(s_lastLink, "mod:")
+                                        ? menu_selector(MDTextArea::onGeodeMod)
+                                        : menu_selector(MDTextArea::onLink)
                         );
                         for (auto const& label : rendered) {
                             label.m_node->setUserObject(CCString::create(s_lastLink));
@@ -258,8 +289,51 @@ struct MDParser {
                         renderer->popDecoFlags();
                         renderer->popColor();
                     }
-                    else if (s_lastImage.size()) {
+                    else if (!s_lastImage.empty()) {
                         bool isFrame = false;
+
+                        const auto splitOnce = [](const std::string& str, char delim) -> std::pair<std::string, std::string> {
+                            const auto pos = str.find(delim);
+                            if (pos == std::string::npos) {
+                                return { str, {} };
+                            }
+                            return { str.substr(0, pos), str.substr(pos + 1) };
+                        };
+
+                        // key value pair of arguments
+                        std::vector<std::pair<std::string, std::string>> imgArguments;
+                        auto split = splitOnce(s_lastImage, '?');
+                        s_lastImage = split.first;
+
+                        imgArguments = ranges::map<decltype(imgArguments)>(utils::string::split(split.second, "&"), [&](auto str) {
+                            return splitOnce(str, '=');
+                        });
+
+                        float spriteScale = 1.0f;
+                        float spriteWidth = 0.0f;
+                        float spriteHeight = 0.0f;
+
+                        for (auto [key, value] : imgArguments) {
+                            if (key == "scale") {
+                                auto scaleRes = utils::numFromString<float>(value);
+                                if (scaleRes) {
+                                    spriteScale = scaleRes.unwrap();
+                                }
+                            }
+                            else if (key == "width") {
+                                auto widthRes = utils::numFromString<float>(value);
+                                if (widthRes) {
+                                    spriteWidth = widthRes.unwrap();
+                                }
+                            }
+                            else if (key == "height") {
+                                auto heightRes = utils::numFromString<float>(value);
+                                if (heightRes) {
+                                    spriteHeight = heightRes.unwrap();
+                                }
+                            }
+                        }
+
                         if (utils::string::startsWith(s_lastImage, "frame:")) {
                             s_lastImage = s_lastImage.substr(s_lastImage.find(":") + 1);
                             isFrame = true;
@@ -271,7 +345,17 @@ struct MDParser {
                         else {
                             spr = CCSprite::create(s_lastImage.c_str());
                         }
-                        if (spr) {
+                        if (spr && spr->getUserObject("geode.texture-loader/fallback") == nullptr) {
+                            spr->setScale(spriteScale);
+                            if (spriteWidth > 0.0f && spriteHeight <= 0.0f) {
+                                limitNodeWidth(spr, spriteWidth, 999.f, .1f);
+                            }
+                            else if (spriteHeight > 0.0f && spriteWidth <= 0.0f) {
+                                limitNodeHeight(spr, spriteHeight, 999.f, .1f);
+                            }
+                            else if (spriteWidth > 0.0f && spriteHeight > 0.0f) {
+                                limitNodeSize(spr, { spriteWidth, spriteHeight }, 999.f, .1f);
+                            }
                             renderer->renderNode(spr);
                         }
                         else {
@@ -304,6 +388,9 @@ struct MDParser {
                                 if (color) {
                                     renderer->pushColor(color.unwrap());
                                 }
+                                else if (compatibilityMode) {
+                                    renderer->pushColor(ccc3(255, 0, 0));
+                                }
                                 else {
                                     log::warn("Error parsing color: {}", color.unwrapErr());
                                 }
@@ -319,7 +406,7 @@ struct MDParser {
 
             default:
                 {
-                    log::warn("Unhandled text type {}", type);
+                    log::warn("Unhandled text type {}", static_cast<int>(type));
                 }
                 break;
         }
@@ -365,6 +452,10 @@ struct MDParser {
                     renderer->pushIndent(g_indent);
                     s_isOrderedList = type == MD_BLOCKTYPE::MD_BLOCK_OL;
                     s_orderedListNum = 0;
+                    if (s_breakListLine) {
+                        renderer->breakLine();
+                        s_breakListLine = false;
+                    }
                 }
                 break;
 
@@ -378,6 +469,10 @@ struct MDParser {
 
             case MD_BLOCKTYPE::MD_BLOCK_LI:
                 {
+                    if (s_breakListLine) {
+                        renderer->breakLine();
+                        s_breakListLine = false;
+                    }
                     renderer->pushOpacity(renderer->getCurrentOpacity() / 2);
                     auto lidetail = static_cast<MD_BLOCK_LI_DETAIL*>(detail);
                     if (s_isOrderedList) {
@@ -388,6 +483,7 @@ struct MDParser {
                         renderer->renderString("• ");
                     }
                     renderer->popOpacity();
+                    s_breakListLine = true;
                 }
                 break;
 
@@ -403,7 +499,7 @@ struct MDParser {
 
             default:
                 {
-                    log::warn("Unhandled block enter type {}", type);
+                    log::warn("Unhandled block enter type {}", static_cast<int>(type));
                 }
                 break;
         }
@@ -447,7 +543,13 @@ struct MDParser {
             case MD_BLOCKTYPE::MD_BLOCK_UL:
                 {
                     renderer->popIndent();
-                    renderer->breakLine();
+                    if (s_breakListLine) {
+                        renderer->breakLine();
+                        s_breakListLine = false;
+                    }
+                    if (renderer->getCurrentIndent() == 0) {
+                        renderer->breakLine();
+                    }
                 }
                 break;
 
@@ -490,7 +592,6 @@ struct MDParser {
 
             case MD_BLOCKTYPE::MD_BLOCK_LI:
                 {
-                    renderer->breakLine();
                 }
                 break;
 
@@ -501,7 +602,7 @@ struct MDParser {
 
             default:
                 {
-                    log::warn("Unhandled block leave type {}", type);
+                    log::warn("Unhandled block leave type {}", static_cast<int>(type));
                 }
                 break;
         }
@@ -558,7 +659,7 @@ struct MDParser {
 
             default:
                 {
-                    log::warn("Unhandled span enter type {}", type);
+                    log::warn("Unhandled span enter type {}", static_cast<int>(type));
                 }
                 break;
         }
@@ -612,7 +713,7 @@ struct MDParser {
 
             default:
                 {
-                    log::warn("Unhandled span leave type {}", type);
+                    log::warn("Unhandled span leave type {}", static_cast<int>(type));
                 }
                 break;
         }
@@ -627,6 +728,7 @@ size_t MDParser::s_orderedListNum = 0;
 bool MDParser::s_isCodeBlock = false;
 float MDParser::s_codeStart = 0;
 decltype(MDParser::s_codeSpans) MDParser::s_codeSpans = {};
+bool MDParser::s_breakListLine = false;
 
 void MDTextArea::updateLabel() {
     m_renderer->begin(m_content, CCPointZero, m_size);
@@ -652,7 +754,17 @@ void MDTextArea::updateLabel() {
 
     MDParser::s_codeSpans = {};
 
-    if (md_parse(m_text.c_str(), m_text.size(), &parser, this)) {
+    auto textContent = m_text;
+    if (auto boolObj = static_cast<CCBool*>(this->getUserObject("compatibilityMode"_spr))) {
+        if (boolObj->getValue()) {
+            textContent = MDTextArea::translateNewlines(m_text);
+
+            // ery proofing...
+            textContent = utils::string::replace(textContent, "<c_>", "<c->");
+        }
+    }
+
+    if (md_parse(textContent.c_str(), textContent.size(), &parser, this)) {
         m_renderer->renderString("Error parsing Markdown");
     }
 
@@ -680,7 +792,15 @@ void MDTextArea::updateLabel() {
 
     m_renderer->end();
 
-    m_scrollLayer->m_contentLayer->setContentSize(m_content->getContentSize());
+    if (m_content->getContentSize().height > m_size.height) {
+        // Generate bottom padding
+        m_scrollLayer->m_contentLayer->setContentSize(m_content->getContentSize() + CCSize { 0.f, 12.5 });
+        m_content->setPositionY(10.f);
+    } else {
+        m_scrollLayer->m_contentLayer->setContentSize(m_content->getContentSize());
+        m_content->setPositionY(-2.5f);
+    }
+
     m_scrollLayer->moveToTop();
 }
 
@@ -699,10 +819,30 @@ char const* MDTextArea::getString() {
 
 MDTextArea* MDTextArea::create(std::string const& str, CCSize const& size) {
     auto ret = new MDTextArea;
-    if (ret && ret->init(str, size)) {
+    if (ret->init(str, size)) {
         ret->autorelease();
         return ret;
     }
-    CC_SAFE_DELETE(ret);
+    delete ret;
     return nullptr;
+}
+
+MDTextArea* MDTextArea::create(std::string const& str, CCSize const& size, bool compatibilityMode) {
+    auto ret = new MDTextArea;
+
+    // TODO in v5: put this in the members
+    auto boolObj = CCBool::create(compatibilityMode);
+    ret->setUserObject("compatibilityMode"_spr, boolObj);
+
+    if (ret->init(str, size)) {
+        ret->autorelease();
+        return ret;
+    }
+    delete ret;
+    return nullptr;
+}
+
+std::string MDTextArea::translateNewlines(std::string const& str) {
+    std::regex newlineRe("(.*\\S)\n(?!\n)");
+    return std::regex_replace(str, newlineRe, "$1  \n");
 }

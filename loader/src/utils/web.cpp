@@ -1,526 +1,868 @@
-#include <Geode/cocos/platform/IncludeCurl.h>
-#include <Geode/loader/Loader.hpp>
-#include <Geode/utils/casts.hpp>
+#include <Geode/loader/Log.hpp>
+#include <Geode/Result.hpp>
+#include <Geode/utils/general.hpp>
+#include <filesystem>
+#include <fmt/core.h>
+#include <fstream>
+#include <matjson.hpp>
+#include <system_error>
+#define CURL_STATICLIB
+#include <curl/curl.h>
+#include <ca_bundle.h>
+
+#include <Geode/loader/Mod.hpp>
 #include <Geode/utils/web.hpp>
-#include <json.hpp>
-#include <thread>
+#include <Geode/utils/file.hpp>
+#include <Geode/utils/string.hpp>
+#include <Geode/utils/map.hpp>
+#include <Geode/utils/terminate.hpp>
+#include <sstream>
 
 using namespace geode::prelude;
-using namespace web;
+using namespace geode::utils::web;
 
-namespace geode::utils::fetch {
-    static size_t writeBytes(char* data, size_t size, size_t nmemb, void* str) {
-        as<ByteVector*>(str)->insert(as<ByteVector*>(str)->end(), data, data + size * nmemb);
-        return size * nmemb;
+static long unwrapProxyType(ProxyType type) {
+    switch (type) {
+        using enum ProxyType;
+
+        case HTTP:
+            return CURLPROXY_HTTP;
+        case HTTPS:
+            return CURLPROXY_HTTPS;
+        case HTTPS2:
+            return CURLPROXY_HTTPS2;
+        case SOCKS4:
+            return CURLPROXY_SOCKS4;
+        case SOCKS4A:
+            return CURLPROXY_SOCKS4A;
+        case SOCKS5:
+            return CURLPROXY_SOCKS5;
+        case SOCKS5H:
+            return CURLPROXY_SOCKS5_HOSTNAME;
     }
 
-    static size_t writeString(char* data, size_t size, size_t nmemb, void* str) {
-        as<std::string*>(str)->append(data, size * nmemb);
-        return size * nmemb;
-    }
-
-    static size_t writeBinaryData(char* data, size_t size, size_t nmemb, void* file) {
-        as<std::ostream*>(file)->write(data, size * nmemb);
-        return size * nmemb;
-    }
-
-    static int progress(void* ptr, double total, double now, double, double) {
-        return (*as<web::FileProgressCallback*>(ptr))(now, total) != true;
-    }
+    // Shouldn't happen.
+    unreachable("Unexpected proxy type!");
 }
 
-Result<> web::fetchFile(
-    std::string const& url, ghc::filesystem::path const& into, FileProgressCallback prog
-) {
-    auto curl = curl_easy_init();
+static long unwrapHttpAuth(long auth) {
+    long unwrapped = 0;
 
-    if (!curl) return Err("Curl not initialized!");
+#define SET_AUTH(name) \
+    if (auth & http_auth::name) \
+        unwrapped |= CURLAUTH_##name;
 
-    std::ofstream file(into, std::ios::out | std::ios::binary);
+    SET_AUTH(BASIC);
+    SET_AUTH(DIGEST);
+    SET_AUTH(DIGEST_IE);
+    SET_AUTH(BEARER);
+    SET_AUTH(NEGOTIATE);
+    SET_AUTH(NTLM);
+    SET_AUTH(NTLM_WB);
+    SET_AUTH(ANY);
+    SET_AUTH(ANYSAFE);
+    SET_AUTH(ONLY);
+    SET_AUTH(AWS_SIGV4);
 
-    if (!file.is_open()) {
-        return Err("Unable to open output file");
-    }
+#undef SET_AUTH
 
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &file);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, utils::fetch::writeBinaryData);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "github_api/1.0");
-    if (prog) {
-        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0);
-        curl_easy_setopt(curl, CURLOPT_PROGRESSFUNCTION, utils::fetch::progress);
-        curl_easy_setopt(curl, CURLOPT_PROGRESSDATA, &prog);
-    }
-    auto res = curl_easy_perform(curl);
-    if (res != CURLE_OK) {
-        curl_easy_cleanup(curl);
-        return Err("Fetch failed: " + std::string(curl_easy_strerror(res)));
-    }
-
-    char* ct;
-    res = curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &ct);
-    if ((res == CURLE_OK) && ct) {
-        curl_easy_cleanup(curl);
-        return Ok();
-    }
-    curl_easy_cleanup(curl);
-    return Err("Error getting info: " + std::string(curl_easy_strerror(res)));
+    return unwrapped;
 }
 
-Result<ByteVector> web::fetchBytes(std::string const& url) {
-    auto curl = curl_easy_init();
+static long unwrapHttpVersion(HttpVersion version)
+{
+    switch (version) {
+        using enum HttpVersion;
 
-    if (!curl) return Err("Curl not initialized!");
-
-    ByteVector ret;
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ret);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, utils::fetch::writeBytes);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "github_api/1.0");
-    auto res = curl_easy_perform(curl);
-    if (res != CURLE_OK) {
-        curl_easy_cleanup(curl);
-        return Err("Fetch failed");
+        case DEFAULT:
+            return CURL_HTTP_VERSION_NONE;
+        case VERSION_1_0:
+            return CURL_HTTP_VERSION_1_0;
+        case VERSION_1_1:
+            return CURL_HTTP_VERSION_1_1;
+        case VERSION_2_0:
+            return CURL_HTTP_VERSION_2_0;
+        case VERSION_2TLS:
+            return CURL_HTTP_VERSION_2TLS;
+        case VERSION_2_PRIOR_KNOWLEDGE:
+            return CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE;
+        case VERSION_3:
+            return CURL_HTTP_VERSION_3;
+        case VERSION_3ONLY:
+            return CURL_HTTP_VERSION_3ONLY;
     }
 
-    char* ct;
-    res = curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &ct);
-    if ((res == CURLE_OK) && ct) {
-        curl_easy_cleanup(curl);
-        return Ok(ret);
-    }
-    curl_easy_cleanup(curl);
-    return Err("Error getting info: " + std::string(curl_easy_strerror(res)));
+    // Shouldn't happen.
+    unreachable("Unexpected HTTP Version!");
 }
 
-Result<json::Value> web::fetchJSON(std::string const& url) {
-    std::string res;
-    GEODE_UNWRAP_INTO(res, fetch(url));
-    try {
-        return Ok(json::parse(res));
-    }
-    catch (std::exception& e) {
-        return Err(e.what());
-    }
-}
-
-Result<std::string> web::fetch(std::string const& url) {
-    auto curl = curl_easy_init();
-
-    if (!curl) return Err("Curl not initialized!");
-
-    std::string ret;
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ret);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, utils::fetch::writeString);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "github_api/1.0");
-    auto res = curl_easy_perform(curl);
-    if (res != CURLE_OK) {
-        curl_easy_cleanup(curl);
-        return Err("Fetch failed");
-    }
-
-    char* ct;
-    res = curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &ct);
-    if ((res == CURLE_OK) && ct) {
-        curl_easy_cleanup(curl);
-        return Ok(ret);
-    }
-    curl_easy_cleanup(curl);
-    return Err("Error getting info: " + std::string(curl_easy_strerror(res)));
-}
-
-class SentAsyncWebRequest::Impl {
-private:
-    enum class Status {
-        Paused,
-        Running,
-        Finished,
-        Cancelled,
-        CleanedUp,
-    };
-    std::string m_id;
-    std::string m_url;
-    std::vector<AsyncThen> m_thens;
-    std::vector<AsyncExpectCode> m_expects;
-    std::vector<AsyncProgress> m_progresses;
-    std::vector<AsyncCancelled> m_cancelleds;
-    Status m_status = Status::Paused;
-    std::atomic<bool> m_paused = true;
-    std::atomic<bool> m_cancelled = false;
-    std::atomic<bool> m_finished = false;
-    std::atomic<bool> m_cleanedUp = false;
-    std::condition_variable m_statusCV;
-    std::mutex m_statusMutex;
-    SentAsyncWebRequest* m_self;
-
-    mutable std::mutex m_mutex;
-    std::variant<std::monostate, std::ostream*, ghc::filesystem::path> m_target =
-        std::monostate();
-    std::vector<std::string> m_httpHeaders;
-
-    template <class T>
-    friend class AsyncWebResult;
-    friend class AsyncWebRequest;
-
-    void pause();
-    void resume();
-    void error(std::string const& error, int code);
-    void doCancel();
-
+class WebResponse::Impl {
 public:
-    Impl(SentAsyncWebRequest* self, AsyncWebRequest const&, std::string const& id);
-    void cancel();
-    bool finished() const;
+    int m_code;
+    ByteVector m_data;
+    std::string m_errMessage;
+    std::unordered_map<std::string, std::vector<std::string>> m_headers;
 
-    friend class SentAsyncWebRequest;
+    Result<> into(std::filesystem::path const& path) const;
 };
 
-static std::unordered_map<std::string, SentAsyncWebRequestHandle> RUNNING_REQUESTS{};
-static std::mutex RUNNING_REQUESTS_MUTEX;
+Result<> WebResponse::Impl::into(std::filesystem::path const& path) const {
+    // Test if there are no permission issues
+    std::error_code ec;
+    auto _ = std::filesystem::exists(path, ec);
+    if (ec) {
+        return Err(fmt::format("Couldn't write to file: {}", ec.category().message(ec.value())));
+    }
 
-SentAsyncWebRequest::Impl::Impl(SentAsyncWebRequest* self, AsyncWebRequest const& req, std::string const& id) :
-    m_id(id), m_url(req.m_url), m_target(req.m_target), m_httpHeaders(req.m_httpHeaders) {
+    auto stream = std::ofstream(path, std::ios::out | std::ios::binary);
+    stream.write(reinterpret_cast<const char*>(m_data.data()), m_data.size());
+    stream.close();
 
-#define AWAIT_RESUME()    \
-    {\
-        auto lock = std::unique_lock(m_statusMutex);\
-        m_statusCV.wait(lock, [this]() { \
-            return !m_paused; \
-        });\
-        if (m_cancelled) {\
-            this->doCancel();\
-            return;\
-        }\
-    }\
+    return Ok();
+}
 
-    if (req.m_then) m_thens.push_back(req.m_then);
-    if (req.m_progress) m_progresses.push_back(req.m_progress);
-    if (req.m_cancelled) m_cancelleds.push_back(req.m_cancelled);
-    if (req.m_expect) m_expects.push_back(req.m_expect);
+struct MultipartFile {
+    ByteVector data;
+    std::string filename;
+    std::string mime;
+};
 
-    std::thread([this]() {
-        AWAIT_RESUME();
+class MultipartForm::Impl {
+public:
+    std::unordered_map<std::string, std::string> m_params;
+    std::unordered_map<std::string, MultipartFile> m_files;
+    mutable std::string m_boundary;
 
+    bool isBuilt() const {
+        return !m_boundary.empty();
+    }
+
+    bool isBoundaryUnique(std::string_view boundary) const {
+        // make sure params and files don't contain the boundary
+        for (auto const& [name, value] : m_params) {
+            if (name.find(boundary) != std::string::npos || value.find(boundary) != std::string::npos) {
+                return false;
+            }
+        }
+
+        // check files
+        for (auto const& [name, file] : m_files) {
+            if (name.find(boundary) != std::string::npos
+                || file.filename.find(boundary) != std::string::npos
+                || file.mime.find(boundary) != std::string::npos) {
+                return false;
+            }
+
+            if (std::ranges::search(file.data, boundary).begin() != file.data.end()) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    void pickUniqueBoundary() const {
+        if (isBuilt()) {
+            return;
+        }
+
+        auto timestamp = std::chrono::system_clock::now().time_since_epoch().count();
+        do {
+            m_boundary = fmt::format("----GeodeWebBoundary{}", timestamp++);
+        } while (!isBoundaryUnique(m_boundary));
+    }
+
+    ByteVector getBody() const {
+        pickUniqueBoundary();
+
+        ByteVector data;
+        const auto addText = [&](std::string_view value) {
+            data.insert(data.end(), value.begin(), value.end());
+        };
+
+        // add params
+        for (auto const& [name, value] : m_params) {
+            addText(fmt::format(
+                "--{}\r\nContent-Disposition: form-data; name=\"{}\"\r\n\r\n{}\r\n",
+                m_boundary, name, value
+            ));
+        }
+
+        // add files
+        for (auto const& [name, file] : m_files) {
+            addText(fmt::format(
+                "--{}\r\nContent-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\nContent-Type: {}\r\n\r\n",
+                m_boundary, name, file.filename, file.mime
+            ));
+            data.insert(data.end(), file.data.begin(), file.data.end());
+            addText("\r\n");
+        }
+
+        addText(fmt::format("--{}--\r\n", m_boundary));
+        return data;
+    }
+};
+
+MultipartForm::MultipartForm() : m_impl(std::make_shared<Impl>()) {}
+MultipartForm::~MultipartForm() = default;
+
+MultipartForm& MultipartForm::param(std::string_view name, std::string_view value) {
+    if (!m_impl->isBuilt()) {
+        m_impl->m_params.insert_or_assign(std::string(name), std::string(value));
+    }
+    return *this;
+}
+
+Result<MultipartForm&> MultipartForm::file(std::string_view name, std::filesystem::path const& path, std::string_view mime) {
+    if (!m_impl->isBuilt()) {
+        GEODE_UNWRAP_INTO(auto data, utils::file::readBinary(path));
+
+        std::string filename = utils::string::pathToString(path.filename());
+
+        // according to mdn, filenames should be ascii
+        for (unsigned char c : filename) {
+            if (c < 0x20 || c > 0x7E) {
+                return Err("Invalid character in filename (0x{:X}): '{}'", c, filename);
+            }
+        }
+
+        m_impl->m_files.insert_or_assign(std::string(name), MultipartFile{
+            .data = std::move(data),
+            .filename = std::move(filename),
+            .mime = std::string(mime),
+        });
+    }
+    return Ok(*this);
+}
+
+MultipartForm& MultipartForm::file(std::string_view name, std::span<uint8_t const> data, std::string_view filename, std::string_view mime) {
+    if (!m_impl->isBuilt()) {
+        m_impl->m_files.insert_or_assign(std::string(name), MultipartFile{
+            .data = ByteVector(data.begin(), data.end()),
+            .filename = std::string(filename),
+            .mime = std::string(mime),
+        });
+    }
+    return *this;
+}
+
+std::string const& MultipartForm::getBoundary() const {
+    m_impl->pickUniqueBoundary();
+    return m_impl->m_boundary;
+}
+
+std::string MultipartForm::getHeader() const {
+    return fmt::format("multipart/form-data; boundary={}", getBoundary());
+}
+
+ByteVector MultipartForm::getBody() const {
+    return m_impl->getBody();
+}
+
+WebResponse::WebResponse() : m_impl(std::make_shared<Impl>()) {}
+
+bool WebResponse::ok() const {
+    return 200 <= m_impl->m_code && m_impl->m_code < 300;
+}
+int WebResponse::code() const {
+    return m_impl->m_code;
+}
+
+Result<std::string> WebResponse::string() const {
+    return Ok(std::string(m_impl->m_data.begin(), m_impl->m_data.end()));
+}
+Result<matjson::Value> WebResponse::json() const {
+    GEODE_UNWRAP_INTO(auto value, this->string());
+    return matjson::parse(value).mapErr([&](auto const& err) {
+        return fmt::format("Error parsing JSON: {}", err);
+    });
+}
+ByteVector WebResponse::data() const {
+    return m_impl->m_data;
+}
+Result<> WebResponse::into(std::filesystem::path const& path) const {
+    return m_impl->into(path);
+}
+
+std::vector<std::string> WebResponse::headers() const {
+    return map::keys(m_impl->m_headers);
+}
+
+std::optional<std::string> WebResponse::header(std::string_view name) const {
+    if (auto str = std::string(name); m_impl->m_headers.contains(str)) {
+        return m_impl->m_headers.at(str).at(0);
+    }
+    return std::nullopt;
+}
+
+std::optional<std::vector<std::string>> WebResponse::getAllHeadersNamed(std::string_view name) const {
+    if (auto str = std::string(name); m_impl->m_headers.contains(str)) {
+        return m_impl->m_headers.at(str);
+    }
+    return std::nullopt;
+}
+
+std::string const& WebResponse::errorMessage() const {
+    return m_impl->m_errMessage;
+}
+
+class WebProgress::Impl {
+public:
+    size_t m_downloadCurrent;
+    size_t m_downloadTotal;
+    size_t m_uploadCurrent;
+    size_t m_uploadTotal;
+};
+
+WebProgress::WebProgress() : m_impl(std::make_shared<Impl>()) {}
+
+size_t WebProgress::downloaded() const {
+    return m_impl->m_downloadCurrent;
+}
+size_t WebProgress::downloadTotal() const {
+    return m_impl->m_downloadTotal;
+}
+std::optional<float> WebProgress::downloadProgress() const {
+    return downloadTotal() > 0 ? std::optional(downloaded() * 100.f / downloadTotal()) : std::nullopt;
+}
+
+size_t WebProgress::uploaded() const {
+    return m_impl->m_uploadCurrent;
+}
+size_t WebProgress::uploadTotal() const {
+    return m_impl->m_uploadTotal;
+}
+std::optional<float> WebProgress::uploadProgress() const {
+    return uploadTotal() > 0 ? std::optional(uploaded() * 100.f / uploadTotal()) : std::nullopt;
+}
+
+class WebRequest::Impl {
+public:
+    static std::atomic_size_t s_idCounter;
+
+    std::string m_method;
+    std::string m_url;
+    std::unordered_map<std::string, std::vector<std::string>> m_headers;
+    std::unordered_map<std::string, std::string> m_urlParameters;
+    std::optional<std::string> m_userAgent;
+    std::optional<std::string> m_acceptEncodingType;
+    std::optional<ByteVector> m_body;
+    std::optional<std::chrono::seconds> m_timeout;
+    std::optional<std::pair<std::uint64_t, std::uint64_t>> m_range;
+    bool m_certVerification = true;
+    bool m_transferBody = true;
+    bool m_followRedirects = true;
+    bool m_ignoreContentLength = false;
+    std::string m_CABundleContent;
+    ProxyOpts m_proxyOpts = {};
+    HttpVersion m_httpVersion = HttpVersion::DEFAULT;
+    size_t m_id;
+
+    Impl() : m_id(s_idCounter++) {}
+
+    WebResponse makeError(int code, std::string const& msg) {
+        auto res = WebResponse();
+        res.m_impl->m_code = code;
+        res.m_impl->m_data = ByteVector(msg.begin(), msg.end());
+        return res;
+    }
+};
+
+std::atomic_size_t WebRequest::Impl::s_idCounter = 0;
+
+WebRequest::WebRequest() : m_impl(std::make_shared<Impl>()) {}
+WebRequest::~WebRequest() {}
+
+// Encodes a url param
+static std::string urlParamEncode(std::string_view input) {
+    std::ostringstream ss;
+    ss << std::hex << std::uppercase;
+    for (char c : input) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            ss << c;
+        } else {
+            ss << '%' << static_cast<int>(c);
+        }
+    }
+    return ss.str();
+}
+
+WebTask WebRequest::send(std::string_view method, std::string_view url) {
+    m_impl->m_method = method;
+    m_impl->m_url = url;
+    return WebTask::run([impl = m_impl](auto progress, auto hasBeenCancelled) -> WebTask::Result {
+        // Init Curl
         auto curl = curl_easy_init();
         if (!curl) {
-            return this->error("Curl not initialized", -1);
+            log::error("Failed to initialize cURL");
+            return impl->makeError(-1, "Failed to initialize curl");
         }
 
-        // resulting byte array
-        ByteVector ret;
-        // output file if downloading to file. unique_ptr because not always
-        // initialized but don't wanna manually managed memory
-        std::unique_ptr<std::ofstream> file = nullptr;
+        // todo: in the future, we might want to support downloading directly into
+        // files / in-memory streams like the old AsyncWebRequest class
 
-        // into file
-        if (std::holds_alternative<ghc::filesystem::path>(m_target)) {
-            file = std::make_unique<std::ofstream>(
-                std::get<ghc::filesystem::path>(m_target), std::ios::out | std::ios::binary
-            );
-            curl_easy_setopt(curl, CURLOPT_WRITEDATA, file.get());
-            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, utils::fetch::writeBinaryData);
-        }
-        // into stream
-        else if (std::holds_alternative<std::ostream*>(m_target)) {
-            curl_easy_setopt(curl, CURLOPT_WRITEDATA, std::get<std::ostream*>(m_target));
-            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, utils::fetch::writeBinaryData);
-        }
-        // into memory
-        else {
-            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ret);
-            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, utils::fetch::writeBytes);
-        }
-        curl_easy_setopt(curl, CURLOPT_URL, m_url.c_str());
-        // No need to verify SSL, we trust our domains :-)
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0);
-        // Github User Agent
-        curl_easy_setopt(curl, CURLOPT_USERAGENT, "github_api/1.0");
-        // Track progress
-        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0);
-        // Follow redirects
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1);
-        // Fail if response code is 4XX or 5XX
-        curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+        // Struct that holds values for the curl callbacks
+        struct ResponseData {
+            WebResponse response;
+            Impl* impl;
+            WebTask::PostProgress progress;
+            WebTask::HasBeenCancelled hasBeenCancelled;
+        } responseData = {
+            .response = WebResponse(),
+            .impl = impl.get(),
+            .progress = progress,
+            .hasBeenCancelled = hasBeenCancelled,
+        };
 
+        // Store downloaded response data into a byte vector
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseData);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, +[](char* data, size_t size, size_t nmemb, void* ptr) {
+            auto& target = static_cast<ResponseData*>(ptr)->response.m_impl->m_data;
+            target.insert(target.end(), data, data + size * nmemb);
+            return size * nmemb;
+        });
+
+        // Set headers
         curl_slist* headers = nullptr;
-        for (auto& header : m_httpHeaders) {
-            headers = curl_slist_append(headers, header.c_str());
+        for (auto& [name, values] : impl->m_headers) {
+            // Sanitize header name
+            auto header = name;
+            header.erase(std::remove_if(header.begin(), header.end(), [](char c) {
+                return c == '\r' || c == '\n';
+            }), header.end());
+            // Append value
+            for (const auto& value: values) {
+                header += ": " + value;
+                headers = curl_slist_append(headers, header.c_str());
+            }
         }
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-        struct ProgressData {
-            SentAsyncWebRequest::Impl* self;
-            std::ofstream* file;
-        } data{this, file.get()};
-
-        curl_easy_setopt(
-            curl,
-            CURLOPT_PROGRESSFUNCTION,
-            +[](void* ptr, double total, double now, double, double) -> int {
-                auto data = static_cast<ProgressData*>(ptr);
-                auto lock = std::unique_lock(data->self->m_statusMutex);
-                data->self->m_statusCV.wait(lock, [data]() { 
-                    return !data->self->m_paused; 
-                });
-                if (data->self->m_cancelled) {
-                    if (data->file) {
-                        data->file->close();
-                    }
-                    return 1;
-                }
-                Loader::get()->queueInGDThread([self = data->self, now, total]() {
-                    std::lock_guard _(self->m_mutex);
-                    for (auto& prog : self->m_progresses) {
-                        prog(*self->m_self, now, total);
-                    }
-                });
-                return 0;
-            }
-        );
-        curl_easy_setopt(curl, CURLOPT_PROGRESSDATA, &data);
-        auto res = curl_easy_perform(curl);
-        if (res != CURLE_OK) {
-            long code = 0;
-            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
-            curl_easy_cleanup(curl);
-            return this->error("Fetch failed: " + std::string(curl_easy_strerror(res)), code);
+        // Add parameters to the URL and pass it to curl
+        auto url = impl->m_url;
+        bool first = url.find('?') == std::string::npos;
+        for (auto& [key, value] : impl->m_urlParameters) {
+            url += (first ? "?" : "&") + urlParamEncode(key) + "=" + urlParamEncode(value);
+            first = false;
         }
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+
+        // Set HTTP version
+        auto useHttp1 = Loader::get()->getLaunchFlag("use-http1");
+        if (impl->m_httpVersion == HttpVersion::DEFAULT && useHttp1) {
+            impl->m_httpVersion = HttpVersion::VERSION_1_1; // Force HTTP/1.1 if the flag is set
+        }
+
+        curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, unwrapHttpVersion(impl->m_httpVersion));
+
+        // Set request method
+        if (impl->m_method != "GET") {
+            if (impl->m_method == "POST") {
+                curl_easy_setopt(curl, CURLOPT_POST, 1L);
+            }
+            else {
+                curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, impl->m_method.c_str());
+            }
+        }
+
+        // Set body if provided
+        if (impl->m_body) {
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, impl->m_body->data());
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, impl->m_body->size());
+        } else if (impl->m_method == "POST") {
+            // curl_easy_perform would freeze on a POST request with no fields, so set it to an empty string
+            // why? god knows
+            // SMJS: because the stream isn't complete without a body according to the spec
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "");
+        }
+
+        // Cert verification
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, impl->m_certVerification ? 1L : 0L);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+
+        int sslOptions = 0;
+
+        if (impl->m_certVerification) {
+            if (impl->m_CABundleContent.empty()) {
+                impl->m_CABundleContent = CA_BUNDLE_CONTENT;
+            }
+
+            if (!impl->m_CABundleContent.empty()) {
+                curl_blob caBundleBlob = {};
+                caBundleBlob.data = reinterpret_cast<void*>(impl->m_CABundleContent.data());
+                caBundleBlob.len = impl->m_CABundleContent.size();
+                caBundleBlob.flags = CURL_BLOB_NOCOPY;
+                curl_easy_setopt(curl, CURLOPT_CAINFO_BLOB, &caBundleBlob);
+                // Also add the native CA, for good measure
+                sslOptions |= CURLSSLOPT_NATIVE_CA;
+            }
+        }
+
+        // weird windows stuff, don't remove if we still use schannel!
+        GEODE_WINDOWS(sslOptions |= CURLSSLOPT_REVOKE_BEST_EFFORT);
+        curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, sslOptions);
+
+        // Transfer body
+        curl_easy_setopt(curl, CURLOPT_NOBODY, impl->m_transferBody ? 0L : 1L);
+
+        // Set user agent if provided
+        if (impl->m_userAgent) {
+            curl_easy_setopt(curl, CURLOPT_USERAGENT, impl->m_userAgent->c_str());
+        }
+
+        // Set encoding
+        if (impl->m_acceptEncodingType) {
+            curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, impl->m_acceptEncodingType->c_str());
+        }
+
+        // Set timeout
+        if (impl->m_timeout) {
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, impl->m_timeout->count());
+        }
+
+        // Set range
+        if (impl->m_range) {
+            curl_easy_setopt(curl, CURLOPT_RANGE, fmt::format("{}-{}", impl->m_range->first, impl->m_range->second).c_str());
+        }
+
+        // Set proxy options
+        auto const& proxyOpts = impl->m_proxyOpts;
+        if (!proxyOpts.address.empty()) {
+            curl_easy_setopt(curl, CURLOPT_PROXY, proxyOpts.address.c_str());
+
+            if (proxyOpts.port.has_value()) {
+                curl_easy_setopt(curl, CURLOPT_PROXYPORT, proxyOpts.port.value());
+            }
+
+            curl_easy_setopt(curl, CURLOPT_PROXYTYPE, unwrapProxyType(proxyOpts.type));
+
+            if (!proxyOpts.username.empty() || !proxyOpts.username.empty()) {
+                curl_easy_setopt(curl, CURLOPT_PROXYAUTH, unwrapHttpAuth(proxyOpts.auth));
+                curl_easy_setopt(curl, CURLOPT_PROXYUSERPWD,
+                    fmt::format("{}:{}", proxyOpts.username, proxyOpts.password).c_str());
+            }
+
+            curl_easy_setopt(curl, CURLOPT_HTTPPROXYTUNNEL, proxyOpts.tunneling ? 1 : 0);
+            curl_easy_setopt(curl, CURLOPT_PROXY_SSL_VERIFYPEER, proxyOpts.certVerification ? 1 : 0);
+            curl_easy_setopt(curl, CURLOPT_PROXY_SSL_VERIFYHOST, 2);
+        }
+
+        // Follow request through 3xx responses
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, impl->m_followRedirects ? 1L : 0L);
+
+        // Ignore content length
+        curl_easy_setopt(curl, CURLOPT_IGNORE_CONTENT_LENGTH, impl->m_ignoreContentLength ? 1L : 0L);
+
+        // Track progress
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+
+        // don't change the method from POST to GET when following a redirect
+        curl_easy_setopt(curl, CURLOPT_POSTREDIR, CURL_REDIR_POST_ALL);
+
+        // Do not fail if response code is 4XX or 5XX
+        curl_easy_setopt(curl, CURLOPT_FAILONERROR, 0L);
+
+        // Verbose logging
+        if (Mod::get()->getSettingValue<bool>("verbose-curl-logs")) {
+            curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+            curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, +[](CURL* handle, curl_infotype type, char* data, size_t size, void* clientp) {
+                while (size > 0 && (data[size - 1] == '\n' || data[size - 1] == '\r')) {
+                    size--; // remove trailing newline
+                }
+
+                switch (type) {
+                    case CURLINFO_TEXT:
+                        log::debug("[Curl] {}", std::string_view(data, size));
+                        break;
+                    case CURLINFO_HEADER_IN:
+                        log::debug("[Curl] Header in: {}", std::string_view(data, size));
+                        break;
+                    case CURLINFO_HEADER_OUT:
+                        log::debug("[Curl] Header out: {}", std::string_view(data, size));
+                        break;
+                    case CURLINFO_DATA_IN:
+                        log::debug("[Curl] Data in ({} bytes)", size);
+                        break;
+                    case CURLINFO_DATA_OUT:
+                        log::debug("[Curl] Data out ({} bytes)", size);
+                        break;
+                    case CURLINFO_SSL_DATA_IN:
+                        log::debug("[Curl] SSL data in ({} bytes)", size);
+                        break;
+                    case CURLINFO_SSL_DATA_OUT:
+                        log::debug("[Curl] SSL data out ({} bytes)", size);
+                        break;
+                    case CURLINFO_END:
+                        log::debug("[Curl] End of info");
+                        break;
+                    default:
+                        log::debug("[Curl] Unknown info type: {}", static_cast<int>(type));
+                        break;
+                }
+            });
+        }
+
+        // If an error happens, we want to get a more specific description of the issue
+        char errorBuf[CURL_ERROR_SIZE];
+        errorBuf[0] = '\0';
+        curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errorBuf);
+
+        // Get headers from the response
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &responseData);
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, (+[](char* buffer, size_t size, size_t nitems, void* ptr) {
+            auto& headers = static_cast<ResponseData*>(ptr)->response.m_impl->m_headers;
+            std::string line;
+            std::stringstream ss(std::string(buffer, size * nitems));
+            while (std::getline(ss, line)) {
+                auto colon = line.find(':');
+                if (colon == std::string::npos) continue;
+                auto key = line.substr(0, colon);
+                auto value = line.substr(colon + 2);
+                if (value.ends_with('\r')) {
+                    value = value.substr(0, value.size() - 1);
+                }
+                // Create a new vector and add to it or add to an already existing one
+                if (headers.contains(key)) {
+                    headers.at(key).push_back(value);
+                } else {
+                    headers.insert_or_assign(key, std::vector{value});
+                }
+            }
+            return size * nitems;
+        }));
+
+        // Track & post progress on the Promise
+        curl_easy_setopt(curl, CURLOPT_PROGRESSDATA, &responseData);
+        curl_easy_setopt(curl, CURLOPT_PROGRESSFUNCTION, +[](void* ptr, double dtotal, double dnow, double utotal, double unow) -> int {
+            auto data = static_cast<ResponseData*>(ptr);
+
+            // Check for cancellation and abort if so
+            if (data->hasBeenCancelled()) {
+                return 1;
+            }
+
+            // Post progress to Promise listener
+            auto progress = WebProgress();
+            progress.m_impl->m_downloadTotal = dtotal;
+            progress.m_impl->m_downloadCurrent = dnow;
+            progress.m_impl->m_uploadTotal = utotal;
+            progress.m_impl->m_uploadCurrent = unow;
+            data->progress(std::move(progress));
+
+            // Continue as normal
+            return 0;
+        });
+
+        // Make the actual web request
+        auto curlResponse = curl_easy_perform(curl);
+
+        // Get the response code; note that this will be invalid if the
+        // curlResponse is not CURLE_OK
+        long code = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+        responseData.response.m_impl->m_code = static_cast<int>(code);
+
+        responseData.response.m_impl->m_errMessage = std::string(errorBuf);
+
+        // Free up curl memory
+        curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
 
-        AWAIT_RESUME();
-
-        // if something is still holding a handle to this
-        // request, then they may still cancel it
-        m_finished = true;
-
-        Loader::get()->queueInGDThread([this, ret]() {
-            std::lock_guard _(m_mutex);
-            for (auto& then : m_thens) {
-                then(*m_self, ret);
+        // Check if the request failed on curl's side or because of cancellation
+        if (curlResponse != CURLE_OK) {
+            if (hasBeenCancelled()) {
+                log::debug("Request cancelled");
+                return WebTask::Cancel();
             }
-            std::lock_guard __(RUNNING_REQUESTS_MUTEX);
-            RUNNING_REQUESTS.erase(m_id);
-        });
-    }).detach();
-}
-
-void SentAsyncWebRequest::Impl::doCancel() {
-    if (m_cleanedUp) return;
-    m_cleanedUp = true;
-
-    // remove file if downloaded to one
-    if (std::holds_alternative<ghc::filesystem::path>(m_target)) {
-        auto path = std::get<ghc::filesystem::path>(m_target);
-        if (ghc::filesystem::exists(path)) {
-            try {
-                ghc::filesystem::remove(path);
-            }
-            catch (...) {
+            else {
+                std::string const err = curl_easy_strerror(curlResponse);
+                log::error("cURL failure, error: {}", err);
+                log::warn("Error buffer: {}", errorBuf);
+                return impl->makeError(
+                    -1,
+                    !*errorBuf ?
+                          fmt::format("Curl failed: {}", err)
+                        : fmt::format("Curl failed: {} ({})", err, errorBuf)
+                );
             }
         }
-    }
 
-    Loader::get()->queueInGDThread([this]() {
-        std::lock_guard _(m_mutex);
-        for (auto& canc : m_cancelleds) {
-            canc(*m_self);
-        }
-    });
-
-    this->error("Request cancelled", -1);
+        // resolve with success :-)
+        return std::move(responseData.response);
+    }, fmt::format("{} {}", method, url));
+}
+WebTask WebRequest::post(std::string_view url) {
+    return this->send("POST", url);
+}
+WebTask WebRequest::get(std::string_view url) {
+    return this->send("GET", url);
+}
+WebTask WebRequest::put(std::string_view url) {
+    return this->send("PUT", url);
+}
+WebTask WebRequest::patch(std::string_view url) {
+    return this->send("PATCH", url);
 }
 
-void SentAsyncWebRequest::Impl::cancel() {
-    m_cancelled = true;
-    // if already finished, cancel anyway to clean up
-    if (m_finished) {
-        this->doCancel();
-    }
-}
+WebRequest& WebRequest::header(std::string_view name, std::string_view value) {
+    if (name == "User-Agent") {
+        userAgent(value);
 
-void SentAsyncWebRequest::Impl::pause() {
-    m_paused = true;
-    m_statusCV.notify_all();
-}
+        return *this;
+    } if (name == "Accept-Encoding") {
+        acceptEncoding(value);
 
-void SentAsyncWebRequest::Impl::resume() {
-    m_paused = false;
-    m_statusCV.notify_all();
-}
+        return *this;
+    } if (name == "Keep-Alive") {
+        const size_t timeoutPos = value.find("timeout");
 
-bool SentAsyncWebRequest::Impl::finished() const {
-    return m_finished;
-}
+        if (timeoutPos != std::string::npos) {
+            // At this point idc what happens if I get NPOS or string ends, you shouldn't custom format a spec header
+            const size_t numStart = value.find('=', timeoutPos) + 1;
+            const size_t comma = value.find(',', numStart);
+            const size_t numLength = (comma == std::string::npos ? value.size() : comma) - numStart;
 
-void SentAsyncWebRequest::Impl::error(std::string const& error, int code) {
-    auto lock = std::unique_lock(m_statusMutex);
-    m_statusCV.wait(lock, [this]() { 
-        return !m_paused; 
-    });
-    Loader::get()->queueInGDThread([this, error, code]() {
-        {
-            std::lock_guard _(m_mutex);
-            for (auto& expect : m_expects) {
-                expect(error, code);
+            int timeoutValue = 5;
+            auto res = numFromString<int>(value.substr(numStart, numLength));
+            if (res) {
+                timeoutValue = res.unwrap();
             }
+
+            timeout(std::chrono::seconds(timeoutValue));
+
+            return *this;
         }
-        std::lock_guard _(RUNNING_REQUESTS_MUTEX);
-        RUNNING_REQUESTS.erase(m_id);
-    });
-}
-
-SentAsyncWebRequest::SentAsyncWebRequest() : m_impl() {}
-SentAsyncWebRequest::~SentAsyncWebRequest() {}
-
-std::shared_ptr<SentAsyncWebRequest> SentAsyncWebRequest::create(AsyncWebRequest const& request, std::string const& id) {
-    auto ret = std::make_shared<SentAsyncWebRequest>();
-    ret->m_impl = std::move(std::make_shared<SentAsyncWebRequest::Impl>(ret.get(), request, id));
-    return ret;
-}
-void SentAsyncWebRequest::doCancel() {
-    return m_impl->doCancel();
-}
-
-void SentAsyncWebRequest::cancel() {
-    return m_impl->cancel();
-}
-
-void SentAsyncWebRequest::pause() {
-    return m_impl->pause();
-}
-
-void SentAsyncWebRequest::resume() {
-    return m_impl->resume();
-}
-
-bool SentAsyncWebRequest::finished() const {
-    return m_impl->finished();
-}
-
-void SentAsyncWebRequest::error(std::string const& error, int code) {
-    return m_impl->error(error, code);
-}
-
-AsyncWebRequest& AsyncWebRequest::join(std::string const& requestID) {
-    m_joinID = requestID;
-    return *this;
-}
-
-AsyncWebRequest& AsyncWebRequest::header(std::string const& header) {
-    m_httpHeaders.push_back(header);
-    return *this;
-}
-
-AsyncWebResponse AsyncWebRequest::fetch(std::string const& url) {
-    m_url = url;
-    return AsyncWebResponse(*this);
-}
-
-AsyncWebRequest& AsyncWebRequest::expect(AsyncExpect handler) {
-    m_expect = [handler](std::string const& info, auto) {
-        return handler(info);
-    };
-    return *this;
-}
-
-AsyncWebRequest& AsyncWebRequest::expect(AsyncExpectCode handler) {
-    m_expect = handler;
-    return *this;
-}
-
-AsyncWebRequest& AsyncWebRequest::progress(AsyncProgress progress) {
-    m_progress = progress;
-    return *this;
-}
-
-AsyncWebRequest& AsyncWebRequest::cancelled(AsyncCancelled cancelledFunc) {
-    m_cancelled = cancelledFunc;
-    return *this;
-}
-
-SentAsyncWebRequestHandle AsyncWebRequest::send() {
-    if (m_sent) return nullptr;
-    m_sent = true;
-
-    std::lock_guard __(RUNNING_REQUESTS_MUTEX);
-
-    // pause all running requests
-    for (auto& [_, req] : RUNNING_REQUESTS) {
-        req->pause();
     }
 
-    SentAsyncWebRequestHandle ret;
-
-    static size_t COUNTER = 0;
-    if (m_joinID && RUNNING_REQUESTS.count(m_joinID.value())) {
-        auto& req = RUNNING_REQUESTS.at(m_joinID.value());
-        std::lock_guard _(req->m_impl->m_mutex);
-        if (m_then) req->m_impl->m_thens.push_back(m_then);
-        if (m_progress) req->m_impl->m_progresses.push_back(m_progress);
-        if (m_expect) req->m_impl->m_expects.push_back(m_expect);
-        if (m_cancelled) req->m_impl->m_cancelleds.push_back(m_cancelled);
-        ret = req;
-    }
-    else {
-        auto id = m_joinID.value_or("__anon_request_" + std::to_string(COUNTER++));
-        ret = SentAsyncWebRequest::create(*this, id);
-        RUNNING_REQUESTS.insert({id, ret});
+    // Create a new vector and add to it or add to an already existing one
+    std::string strName = std::string(name);
+    std::string strValue = std::string(value);
+    if (m_impl->m_headers.contains(strName)) {
+        m_impl->m_headers.at(strName).push_back(strValue);
+    } else {
+        m_impl->m_headers.insert_or_assign(strName, std::vector{strValue});
     }
 
-    // resume all running requests
-    for (auto& [_, req] : RUNNING_REQUESTS) {
-        req->resume();
-    }
-
-    return ret;
+    return *this;
 }
 
-AsyncWebRequest::~AsyncWebRequest() {
-    this->send();
+WebRequest& WebRequest::removeHeader(std::string_view name) {
+    m_impl->m_headers.erase(std::string(name));
+    return *this;
 }
 
-AsyncWebResult<std::monostate> AsyncWebResponse::into(std::ostream& stream) {
-    m_request.m_target = &stream;
-    return this->as(+[](ByteVector const&) -> Result<std::monostate> {
-        return Ok(std::monostate());
-    });
+WebRequest& WebRequest::param(std::string_view name, std::string_view value) {
+    m_impl->m_urlParameters.insert_or_assign(std::string(name), std::string(value));
+    return *this;
 }
 
-AsyncWebResult<std::monostate> AsyncWebResponse::into(ghc::filesystem::path const& path) {
-    m_request.m_target = path;
-    return this->as(+[](ByteVector const&) -> Result<std::monostate> {
-        return Ok(std::monostate());
-    });
+WebRequest& WebRequest::removeParam(std::string_view name) {
+    m_impl->m_urlParameters.erase(std::string(name));
+    return *this;
 }
 
-AsyncWebResult<std::string> AsyncWebResponse::text() {
-    return this->as(+[](ByteVector const& bytes) -> Result<std::string> {
-        return Ok(std::string(bytes.begin(), bytes.end()));
-    });
+WebRequest& WebRequest::userAgent(std::string_view name) {
+    m_impl->m_userAgent = name;
+    return *this;
 }
 
-AsyncWebResult<ByteVector> AsyncWebResponse::bytes() {
-    return this->as(+[](ByteVector const& bytes) -> Result<ByteVector> {
-        return Ok(bytes);
-    });
+WebRequest& WebRequest::timeout(std::chrono::seconds time) {
+    m_impl->m_timeout = time;
+    return *this;
 }
 
-AsyncWebResult<json::Value> AsyncWebResponse::json() {
-    return this->as(+[](ByteVector const& bytes) -> Result<json::Value> {
-        try {
-            return Ok(json::parse(std::string(bytes.begin(), bytes.end())));
-        }
-        catch (std::exception& e) {
-            return Err(std::string(e.what()));
-        }
-    });
+WebRequest& WebRequest::downloadRange(std::pair<std::uint64_t, std::uint64_t> byteRange) {
+    m_impl->m_range = byteRange;
+    return *this;
+}
+
+WebRequest& WebRequest::certVerification(bool enabled) {
+    m_impl->m_certVerification = enabled;
+    return *this;
+}
+WebRequest& WebRequest::transferBody(bool enabled) {
+    m_impl->m_transferBody = enabled;
+    return *this;
+}
+
+WebRequest& WebRequest::followRedirects(bool enabled) {
+    m_impl->m_followRedirects = enabled;
+    return *this;
+}
+
+WebRequest& WebRequest::ignoreContentLength(bool enabled) {
+    m_impl->m_ignoreContentLength = enabled;
+    return *this;
+}
+
+WebRequest& WebRequest::CABundleContent(std::string_view content) {
+    m_impl->m_CABundleContent = content;
+    return *this;
+}
+
+WebRequest& WebRequest::proxyOpts(ProxyOpts const& proxyOpts) {
+    m_impl->m_proxyOpts = proxyOpts;
+    return *this;
+}
+
+WebRequest& WebRequest::version(HttpVersion httpVersion) {
+    m_impl->m_httpVersion = httpVersion;
+    return *this;
+}
+
+WebRequest& WebRequest::acceptEncoding(std::string_view str) {
+    m_impl->m_acceptEncodingType = str;
+    return *this;
+}
+
+WebRequest& WebRequest::body(ByteVector raw) {
+    m_impl->m_body = raw;
+    return *this;
+}
+WebRequest& WebRequest::bodyString(std::string_view str) {
+    m_impl->m_body = ByteVector { str.begin(), str.end() };
+    return *this;
+}
+WebRequest& WebRequest::bodyJSON(matjson::Value const& json) {
+    this->header("Content-Type", "application/json");
+    std::string str = json.dump(matjson::NO_INDENTATION);
+    m_impl->m_body = ByteVector { str.begin(), str.end() };
+    return *this;
+}
+WebRequest& WebRequest::bodyMultipart(MultipartForm const& form) {
+    this->header("Content-Type", form.getHeader());
+    m_impl->m_body = form.getBody();
+    return *this;
+}
+
+size_t WebRequest::getID() const {
+    return m_impl->m_id;
+}
+
+std::string WebRequest::getMethod() const {
+    return m_impl->m_method;
+}
+
+std::string WebRequest::getUrl() const {
+    return m_impl->m_url;
+}
+
+std::unordered_map<std::string, std::vector<std::string>> WebRequest::getHeaders() const {
+    return m_impl->m_headers;
+}
+
+std::unordered_map<std::string, std::string> WebRequest::getUrlParams() const {
+    return m_impl->m_urlParameters;
+}
+
+std::optional<ByteVector> WebRequest::getBody() const {
+    return m_impl->m_body;
+}
+
+std::optional<std::chrono::seconds> WebRequest::getTimeout() const {
+    return m_impl->m_timeout;
+}
+
+HttpVersion WebRequest::getHttpVersion() const {
+    return m_impl->m_httpVersion;
 }

@@ -3,21 +3,15 @@
 
 #include "../../include/ccMacros.h"
 
-RT_ADD(
-	NS_CC_BEGIN
+NS_CC_BEGIN
 
-	class CC_DLL CCSceneTransitionDelegate
-	{
-		CCSceneTransitionDelegate(const CCSceneTransitionDelegate&);
-		CCSceneTransitionDelegate();
+// @note RobTop Addition
+class CC_DLL CCSceneTransitionDelegate {
+public:
+	virtual void sceneWillResume(void) {}
+};
 
-		CCSceneTransitionDelegate& operator=(const CCSceneTransitionDelegate&);
-
-		virtual void sceneWillResume(void);
-	};
-
-	NS_CC_END
-)
+NS_CC_END
 
 
 #endif //__CCSCENE_TRANSITION_DELEGATE_H__

@@ -65,7 +65,7 @@ public:
     /**
     @brief    If the sender doesn't want to insert the text, return true;
     */
-    virtual bool onTextFieldInsertText(CCTextFieldTTF * sender, const char * text, int nLen)
+    virtual bool onTextFieldInsertText(CCTextFieldTTF * sender, const char * text, int nLen, cocos2d::enumKeyCodes)
     {
         CC_UNUSED_PARAM(sender);
         CC_UNUSED_PARAM(text);
@@ -93,9 +93,8 @@ public:
         return false;
     }
 
-    RT_ADD(
-    	virtual void textChanged() {}
-    )
+    // @note RobTop Addition
+    virtual void textChanged() {}
 };
 
 /**
@@ -110,6 +109,7 @@ public:
      *  @lua NA
      */
     CCTextFieldTTF();
+    GEODE_CUSTOM_CONSTRUCTOR_COCOS(CCTextFieldTTF, CCLabelTTF)
     /**
      *  @lua NA
      */
@@ -149,7 +149,7 @@ public:
 public:
     virtual void setString(const char *text);
     virtual const char* getString(void);
-protected:
+public:
     gd::string * m_pInputText;
 
     // place holder text property
@@ -157,13 +157,13 @@ protected:
 public:
     virtual void setPlaceHolder(const char * text);
     virtual const char * getPlaceHolder(void);
-protected:
+public:
     gd::string * m_pPlaceHolder;
     ccColor3B m_ColorSpaceHolder;
 public:
     virtual void setSecureTextEntry(bool value);
     virtual bool isSecureTextEntry();
-protected:
+public:
     bool m_bSecureTextEntry;
 protected:
 
@@ -175,12 +175,14 @@ protected:
 
     virtual bool canAttachWithIME();
     virtual bool canDetachWithIME();
-    virtual void insertText(const char * text, int len);
+    virtual void insertText(const char * text, int len, cocos2d::enumKeyCodes);
     virtual void deleteBackward();
     virtual const char * getContentText();
-private:
+public:
     class LengthStack;
     LengthStack * m_pLens;
+public:
+    int m_uCursorPos;
 };
 
 // end of input group

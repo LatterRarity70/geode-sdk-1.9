@@ -5,8 +5,8 @@
 #pragma warning(disable: 4275)
 
 namespace geode {
-    // all of these are explicitly numbered so if we add a new size / color in 
-    // the future we can slot it in reasonably and just set the number to be at 
+    // all of these are explicitly numbered so if we add a new size / color in
+    // the future we can slot it in reasonably and just set the number to be at
     // the end so backwards compatability stays
     // (for example TinyAlt = 8 to CircleBaseSize)
 
@@ -28,7 +28,8 @@ namespace geode {
         Gray = 2,
         Blue = 3,
         Cyan = 4,
-        Geode = 5,
+        DarkPurple = 5, // Geode-added color, used in Geode UIs
+        DarkAqua = 6,   // Geode-added color, used in Geode UIs
     };
     GEODE_DLL const char* baseEnumToString(CircleBaseColor);
 
@@ -81,6 +82,10 @@ namespace geode {
         Teal = 6,
         Aqua = 7,
         Cyan = 8,
+        Magenta = 9,
+        DimGreen = 10,
+        BrightGreen = 11,
+        Salmon = 12,
     };
     GEODE_DLL const char* baseEnumToString(EditorBaseColor);
 
@@ -148,6 +153,8 @@ namespace geode {
         int m_size;
         int m_color;
         cocos2d::CCNode* m_onTop = nullptr;
+        float m_onTopRelativeScale = 1.f;
+        cocos2d::CCPoint m_topOffset = cocos2d::CCPointZero;
 
         bool init(cocos2d::CCNode* ontop, BaseType type, int size, int color);
         bool initWithSprite(
@@ -157,34 +164,39 @@ namespace geode {
             const char* sprName, float sprScale, BaseType type, int size, int color
         );
 
-        cocos2d::CCPoint getTopOffset() const;
         virtual cocos2d::CCSize getMaxTopSize() const;
 
         virtual ~BasedButtonSprite();
 
     public:
         /**
-         * Create a BasedButtonSprite. In general, it is recommended to use 
-         * the specialized subclasses, such as CircleButtonSprite or 
+         * Create a BasedButtonSprite. In general, it is recommended to use
+         * the specialized subclasses, such as CircleButtonSprite or
          * TabButtonSprite
          * @param ontop The top node of the sprite
          * @param type The type of the base sprite
-         * @param size The size of the base sprite. Cast this from the base 
+         * @param size The size of the base sprite. Cast this from the base
          * type's respective BaseSize enum
-         * @param color The color of the base sprite. Cast this from the base 
+         * @param color The color of the base sprite. Cast this from the base
          * type's respective BaseColor enum
-         * @returns Created BasedButtonSprite, or nullptr if parameters were 
-         * invalid 
+         * @returns Created BasedButtonSprite, or nullptr if parameters were
+         * invalid
          */
         static BasedButtonSprite* create(
             cocos2d::CCNode* ontop, BaseType type, int size, int color
         );
 
+        /**
+         * Set an offset to the top sprite
+         */
+        void setTopOffset(cocos2d::CCPoint const& offset);
+        void setTopRelativeScale(float scale);
+
         cocos2d::CCNode* getTopNode() const;
     };
 
     /**
-     * Creates a button sprite with a circular base, similar to the buttons at 
+     * Creates a button sprite with a circular base, similar to the buttons at
      * the bottom of the main menu
      */
     class GEODE_DLL CircleButtonSprite : public BasedButtonSprite {
@@ -207,7 +219,7 @@ namespace geode {
     };
 
     /**
-     * Creates a button sprite with a cross base, like the buttons in the main 
+     * Creates a button sprite with a cross base, like the buttons in the main
      * menu
      */
     class GEODE_DLL CrossButtonSprite : public BasedButtonSprite {
@@ -230,7 +242,7 @@ namespace geode {
     };
 
     /**
-     * Creates a button sprite with a cross base, like the buttons in the main 
+     * Creates a button sprite with a cross base, like the buttons in the main
      * menu
      */
     class GEODE_DLL AccountButtonSprite : public BasedButtonSprite {
@@ -253,7 +265,7 @@ namespace geode {
     };
 
     /**
-     * Creates a button sprite with a cross base, like the buttons in the main 
+     * Creates a button sprite with a cross base, like the buttons in the main
      * menu
      */
     class GEODE_DLL IconSelectButtonSprite : public BasedButtonSprite {
@@ -276,7 +288,7 @@ namespace geode {
     };
 
     /**
-     * Creates a button sprite with a cross base, like the buttons in the main 
+     * Creates a button sprite with a cross base, like the buttons in the main
      * menu
      */
     class GEODE_DLL LeaderboardButtonSprite : public BasedButtonSprite {
@@ -299,7 +311,7 @@ namespace geode {
     };
 
     /**
-     * Creates a button sprite with the same base as the right-side action 
+     * Creates a button sprite with the same base as the right-side action
      * buttons in the editor
      */
     class GEODE_DLL EditorButtonSprite : public BasedButtonSprite {
@@ -334,7 +346,7 @@ namespace geode {
     };
 
     /**
-     * Creates a button sprite for category buttons, i.e. the big buttons in 
+     * Creates a button sprite for category buttons, i.e. the big buttons in
      * CreatorLayer
      */
     class GEODE_DLL CategoryButtonSprite : public BasedButtonSprite {

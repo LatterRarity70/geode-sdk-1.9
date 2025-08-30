@@ -1,30 +1,36 @@
-
 #include "LoaderImpl.hpp"
 #include <cocos2d.h>
+
+#include "ModImpl.hpp"
+#include "ModMetadataImpl.hpp"
+#include "LogImpl.hpp"
+#include "console.hpp"
+
 #include <Geode/loader/Dirs.hpp>
 #include <Geode/loader/IPC.hpp>
 #include <Geode/loader/Loader.hpp>
 #include <Geode/loader/Log.hpp>
 #include <Geode/loader/Mod.hpp>
-#include <Geode/loader/ModJsonTest.hpp>
+#include <Geode/utils/JsonValidation.hpp>
 #include <Geode/utils/file.hpp>
 #include <Geode/utils/map.hpp>
 #include <Geode/utils/ranges.hpp>
 #include <Geode/utils/string.hpp>
 #include <Geode/utils/web.hpp>
-#include <Geode/utils/JsonValidation.hpp>
-#include "ModImpl.hpp"
-#include "ModInfoImpl.hpp"
 #include <about.hpp>
 #include <crashlog.hpp>
 #include <fmt/format.h>
 #include <hash.hpp>
 #include <iostream>
+#include <iterator>
+#include <optional>
 #include <resources.hpp>
-#include <sstream>
 #include <string>
-#include <thread>
+#include <string_view>
 #include <vector>
+
+#include <server/DownloadManager.hpp>
+#include <Geode/ui/Popup.hpp>
 
 using namespace geode::prelude;
 
@@ -32,29 +38,35 @@ Loader::Impl* LoaderImpl::get() {
     return Loader::get()->m_impl.get();
 }
 
-Loader::Impl::Impl() {}
+Loader::Impl::Impl() = default;
 
-Loader::Impl::~Impl() {}
+Loader::Impl::~Impl() = default;
 
 // Initialization
 
 void Loader::Impl::createDirectories() {
-#ifdef GEODE_IS_MACOS
-    ghc::filesystem::create_directory(dirs::getSaveDir());
-#endif
-
-    // try deleting geode/unzipped if it already exists
-    try { ghc::filesystem::remove_all(dirs::getModRuntimeDir()); } catch(...) {}
-
-    ghc::filesystem::create_directories(dirs::getGeodeResourcesDir());
-    ghc::filesystem::create_directory(dirs::getModConfigDir());
-    ghc::filesystem::create_directory(dirs::getModsDir());
-    ghc::filesystem::create_directory(dirs::getGeodeLogDir());
-    ghc::filesystem::create_directory(dirs::getTempDir());
-    ghc::filesystem::create_directory(dirs::getModRuntimeDir());
+    log::debug("Creating necessary directories");
+    (void) utils::file::createDirectoryAll(dirs::getSaveDir());
+    (void) utils::file::createDirectoryAll(dirs::getGeodeResourcesDir());
+    (void) utils::file::createDirectoryAll(dirs::getModConfigDir());
+    (void) utils::file::createDirectoryAll(dirs::getModsDir());
+    (void) utils::file::createDirectoryAll(dirs::getGeodeLogDir());
+    (void) utils::file::createDirectoryAll(dirs::getTempDir());
+    (void) utils::file::createDirectoryAll(dirs::getModRuntimeDir());
 
     if (!ranges::contains(m_modSearchDirectories, dirs::getModsDir())) {
         m_modSearchDirectories.push_back(dirs::getModsDir());
+    }
+}
+
+void Loader::Impl::removeDirectories() {
+    log::debug("Removing unnecessary directories");
+    // clean up of stale data from Geode v2
+    if(std::filesystem::exists(dirs::getGeodeDir() / "index")) {
+        std::thread([] {
+            std::error_code ec;
+            std::filesystem::remove_all(dirs::getGeodeDir() / "index", ec);
+        }).detach();
     }
 }
 
@@ -63,40 +75,72 @@ Result<> Loader::Impl::setup() {
         return Ok();
     }
 
-    log::Logger::setup();
-
-    if (crashlog::setupPlatformHandler()) {
-        log::debug("Set up platform crash logger");
-    }
-    else {
-        log::debug("Unable to set up platform crash logger");
+    if (this->supportsLaunchArguments()) {
+        log::info("Loading launch arguments");
+        log::NestScope nest;
+        this->initLaunchArguments();
     }
 
-    log::debug("Setting up Loader...");
+    if (auto value = this->getLaunchArgument("use-common-handler-offset")) {
+        log::info("Using common handler offset: {}", value.value());
+        log::NestScope nest;
+        auto offset = numFromString<size_t>(value.value(), 16);
+        if (offset.isErr()) {
+            log::error("Could not parse common handler offset, falling back to default");
+        } else {
+            log::info("Disabling runtime intervening");
+            auto res = tulip::hook::disableRuntimeIntervening((void*)(base::get() + offset.unwrap()));
+            if (res.isErr()) {
+                log::error("Failed to disable runtime intervening: {}", res.unwrapErr());
+            } else {
+                log::info("Runtime intervening disabled successfully");
+                m_isPatchless = true;
+            }
+        }
+    }
 
-    log::debug("Set up internal mod representation");
-    log::debug("Loading hooks... ");
+    if (auto value = this->getLaunchArgument("binary-dir")) {
+        log::info("Using custom binary directory: {}", value.value());
+        m_binaryPath = value.value();
+    }
 
-    if (!this->loadHooks()) {
+    if (this->getLaunchFlag("enable-tulip-hook-logs")) {
+        log::info("Enabling TulipHook logs");
+        tulip::hook::setLogCallback([](std::string_view msg) {
+            log::debug("TulipHook: {}", msg);
+        });
+    }
+
+    // on some platforms, using the crash handler overrides more convenient native handlers
+    if (!this->getLaunchFlag("disable-crash-handler")) {
+        log::info("Setting up crash handler");
+        log::NestScope nest;
+        if (!crashlog::setupPlatformHandler()) {
+            log::debug("Failed to set up crash handler");
+        }
+    } else {
+        log::info("Crash handler setup skipped");
+    }
+
+    log::info("Loading hooks");
+    if (log::NestScope nest; !this->loadHooks()) {
         return Err("There were errors loading some hooks, see console for details");
     }
 
-    log::debug("Loaded hooks");
-
-    log::debug("Setting up IPC...");
-
-    this->setupIPC();
-
-    this->createDirectories();
-    auto sett = this->loadData();
-    if (!sett) {
-        log::warn("Unable to load loader settings: {}", sett.unwrapErr());
+    log::info("Setting up directories");
+    {
+        log::NestScope nest;
+        this->createDirectories();
+        this->removeDirectories();
+        this->addSearchPaths();
     }
-    this->refreshModsList();
 
-    this->queueInGDThread([]() {
-        Loader::get()->addSearchPaths();
-    });
+    // Trigger on_mod(Loaded) for the internal mod
+    // this function is already on the gd thread, so this should be fine
+    ModStateEvent(Mod::get(), ModEventType::Loaded).post();
+
+    log::info("Refreshing mod graph");
+    this->refreshModGraph();
 
     m_isSetup = true;
 
@@ -104,46 +148,41 @@ Result<> Loader::Impl::setup() {
 }
 
 void Loader::Impl::addSearchPaths() {
+    log::debug("Adding search paths");
     CCFileUtils::get()->addPriorityPath(dirs::getGeodeResourcesDir().string().c_str());
     CCFileUtils::get()->addPriorityPath(dirs::getModRuntimeDir().string().c_str());
 }
 
-void Loader::Impl::updateResources() {
-    this->updateResources(true);
-}
-
 void Loader::Impl::updateResources(bool forceReload) {
     log::debug("Adding resources");
-
-    // add mods' spritesheets
+    log::NestScope nest;
     for (auto const& [_, mod] : m_mods) {
-        if (forceReload || !ModImpl::getImpl(mod)->m_resourcesLoaded) {
-            this->updateModResources(mod);
-            ModImpl::getImpl(mod)->m_resourcesLoaded = true;
-        }
+        if (!forceReload && ModImpl::getImpl(mod)->m_resourcesLoaded)
+            continue;
+        this->updateModResources(mod);
+        ModImpl::getImpl(mod)->m_resourcesLoaded = true;
     }
+    // deduplicate mod resource paths, since they added in both updateModResources and Mod::Impl::setup
+    // we have to call it in both places since setup is only called once ever, but updateResources is called
+    // on every texture reload
+    CCFileUtils::get()->updatePaths();
 }
 
 std::vector<Mod*> Loader::Impl::getAllMods() {
     return map::values(m_mods);
 }
 
-Mod* Loader::Impl::getModImpl() {
-    return Mod::get();
-}
-
-std::vector<InvalidGeodeFile> Loader::Impl::getFailedMods() const {
-    return m_invalidMods;
-}
-
 // Version info
 
 VersionInfo Loader::Impl::getVersion() {
-    return LOADER_VERSION;
+    return about::getLoaderVersion();
 }
 
 VersionInfo Loader::Impl::minModVersion() {
-    return VersionInfo { 1, 0, 0, VersionTag(VersionTag::Beta, 5) };
+    auto ver = this->getVersion();
+    return VersionInfo {
+        ver.getMajor(), 0, 0, ver.getTag()
+    };
 }
 
 VersionInfo Loader::Impl::maxModVersion() {
@@ -155,98 +194,31 @@ VersionInfo Loader::Impl::maxModVersion() {
     };
 }
 
-bool Loader::Impl::isModVersionSupported(VersionInfo const& version) {
-    return
-        version >= this->minModVersion() &&
-        version <= this->maxModVersion();
-}
-
 // Data saving
 
-Result<> Loader::Impl::saveData() {
-    // save mods' data
+void Loader::Impl::saveData() {
     for (auto& [id, mod] : m_mods) {
-        Mod::get()->setSavedValue("should-load-" + id, mod->isEnabled());
+        log::debug("{}", mod->getID());
+        log::NestScope nest;
         auto r = mod->saveData();
         if (!r) {
             log::warn("Unable to save data for mod \"{}\": {}", mod->getID(), r.unwrapErr());
         }
     }
-    // save loader data
-    GEODE_UNWRAP(Mod::get()->saveData());
-    
-    return Ok();
 }
 
-Result<> Loader::Impl::loadData() {
-    auto e = Mod::get()->loadData();
-    if (!e) {
-        log::warn("Unable to load loader settings: {}", e.unwrapErr());
-    }
+void Loader::Impl::loadData() {
     for (auto& [_, mod] : m_mods) {
+        log::debug("{}", mod->getID());
+        log::NestScope nest;
         auto r = mod->loadData();
         if (!r) {
             log::warn("Unable to load data for mod \"{}\": {}", mod->getID(), r.unwrapErr());
         }
     }
-    return Ok();
 }
 
 // Mod loading
-
-Result<Mod*> Loader::Impl::loadModFromInfo(ModInfo const& info) {
-    if (m_mods.count(info.id())) {
-        return Err(fmt::format("Mod with ID '{}' already loaded", info.id()));
-    }
-
-    // create Mod instance
-    auto mod = new Mod(info);
-    auto setupRes = mod->m_impl->setup();
-    if (!setupRes) {
-        // old code artifcat, idk why we are not using unique_ptr TBH
-        delete mod;
-        return Err(fmt::format(
-            "Unable to setup mod '{}': {}",
-            info.id(), setupRes.unwrapErr()
-        ));
-    }
-
-    m_mods.insert({ info.id(), mod });
-
-    mod->m_impl->m_enabled = Mod::get()->getSavedValue<bool>(
-        "should-load-" + info.id(), true
-    );
-
-    // this loads the mod if its dependencies are resolved
-    auto dependenciesRes = mod->updateDependencies();
-    if (!dependenciesRes) {
-        delete mod;
-        m_mods.erase(info.id());
-        return Err(dependenciesRes.unwrapErr());
-    }
-
-    // add mod resources
-    this->queueInGDThread([this, mod]() {
-        auto searchPath = dirs::getModRuntimeDir() / mod->getID() / "resources";
-
-        CCFileUtils::get()->addSearchPath(searchPath.string().c_str());
-        this->updateModResources(mod);
-    });
-
-    return Ok(mod);
-}
-
-Result<Mod*> Loader::Impl::loadModFromFile(ghc::filesystem::path const& file) {
-    auto res = ModInfo::createFromGeodeFile(file);
-    if (!res) {
-        m_invalidMods.push_back(InvalidGeodeFile {
-            .path = file,
-            .reason = res.unwrapErr(),
-        });
-        return Err(res.unwrapErr());
-    }
-    return this->loadModFromInfo(res.unwrap());
-}
 
 bool Loader::Impl::isModInstalled(std::string const& id) const {
     return m_mods.count(id) && !m_mods.at(id)->isUninstalled();
@@ -260,13 +232,13 @@ Mod* Loader::Impl::getInstalledMod(std::string const& id) const {
 }
 
 bool Loader::Impl::isModLoaded(std::string const& id) const {
-    return m_mods.count(id) && m_mods.at(id)->isLoaded() && m_mods.at(id)->isEnabled();
+    return m_mods.count(id) && m_mods.at(id)->isEnabled();
 }
 
 Mod* Loader::Impl::getLoadedMod(std::string const& id) const {
     if (m_mods.count(id)) {
         auto mod = m_mods.at(id);
-        if (mod->isLoaded() && mod->isEnabled()) {
+        if (mod->isEnabled()) {
             return mod;
         }
     }
@@ -274,16 +246,20 @@ Mod* Loader::Impl::getLoadedMod(std::string const& id) const {
 }
 
 void Loader::Impl::updateModResources(Mod* mod) {
-    if (!mod->m_impl->m_info.spritesheets().size()) {
-        return;
+    if (!mod->isInternal()) {
+        // geode.loader resource is stored somewhere else, which is already added anyway
+        auto searchPathRoot = dirs::getModRuntimeDir() / mod->getID() / "resources";
+        CCFileUtils::get()->addSearchPath(searchPathRoot.string().c_str());
     }
 
-    auto searchPath = mod->getResourcesDir();
+    // only thing needs previous setup is spritesheets
+    if (mod->getMetadataRef().getSpritesheets().empty())
+        return;
 
-    log::debug("Adding resources for {}", mod->getID());
+    log::debug("{}", mod->getID());
+    log::NestScope nest;
 
-    // add spritesheets
-    for (auto const& sheet : mod->m_impl->m_info.spritesheets()) {
+    for (auto const& sheet : mod->getMetadataRef().getSpritesheets()) {
         log::debug("Adding sheet {}", sheet);
         auto png = sheet + ".png";
         auto plist = sheet + ".plist";
@@ -292,8 +268,8 @@ void Loader::Impl::updateModResources(Mod* mod) {
         if (png == std::string(ccfu->fullPathForFilename(png.c_str(), false)) ||
             plist == std::string(ccfu->fullPathForFilename(plist.c_str(), false))) {
             log::warn(
-                "The resource dir of \"{}\" is missing \"{}\" png and/or plist files",
-                mod->m_impl->m_info.id(), sheet
+                R"(The resource dir of "{}" is missing "{}" png and/or plist files)",
+                mod->getID(), sheet
             );
         }
         else {
@@ -303,509 +279,804 @@ void Loader::Impl::updateModResources(Mod* mod) {
     }
 }
 
+void Loader::Impl::addProblem(LoadProblem const& problem) {
+    if (std::holds_alternative<Mod*>(problem.cause)) {
+        auto mod = std::get<Mod*>(problem.cause);
+        ModImpl::getImpl(mod)->m_problems.push_back(problem);
+    }
+    m_problems.push_back(problem);
+}
+
+void Loader::Impl::queueInternalMods(std::vector<ModMetadata>& modQueue) {
+    geode::log::info("Finding internal mods");
+
+    auto modsRes = utils::file::readJsonFromResources("mods.json");
+    if (!modsRes) {
+        geode::log::warn("Failed to find internal loads: {}", modsRes.unwrapErr());
+        return;
+    }
+
+    auto mods = modsRes.unwrap().asArray();
+    if (!mods) {
+        geode::log::warn("Failed to find internal mods: mods.json not an array");
+        return;
+    }
+
+    for (auto& mod : mods.unwrap()) {
+        auto mod_id_res = mod.asString();
+        if (!mod_id_res) {
+            geode::log::error("Failed to load internal mod: id is not string");
+            continue;
+        }
+
+        auto mod_id = mod_id_res.unwrap();
+
+        // determine filename
+        auto mod_pathname = mod_id + "/mod.json";
+
+        auto json = utils::file::readJsonFromResources(mod_pathname);
+        if (!json) {
+            geode::log::error("Unable to parse mod.json: {}", json.unwrapErr());
+            continue;
+        }
+
+        log::pushNest();
+
+        auto res = ModMetadata::create(json.unwrap());
+        if (!res) {
+            this->addProblem({LoadProblem::Type::InvalidFile, mod_id, res.unwrapErr()});
+            log::error("Failed to queue: {}", res.unwrapErr());
+            log::popNest();
+            continue;
+        }
+        auto modMetadata = res.unwrap();
+
+        if (!modMetadata.getInternalBinary()) {
+            this->addProblem({LoadProblem::Type::UnzipFailed, mod_id, res.unwrapErr()});
+            log::error("Failed to queue: internal mod has no defined internal binary");
+            log::popNest();
+            continue;
+        }
+
+        log::debug("id: {}", modMetadata.getID());
+        log::debug("version: {}", modMetadata.getVersion());
+        log::debug("early: {}", modMetadata.needsEarlyLoad() ? "yes" : "no");
+
+        (void)modMetadata.addSpecialFilesFromResources();
+
+        modQueue.push_back(modMetadata);
+        log::popNest();
+    }
+}
+
 // Dependencies and refreshing
 
-void Loader::Impl::loadModsFromDirectory(
-    ghc::filesystem::path const& dir,
-    bool recursive
-) {
-    log::debug("Searching {}", dir);
-    for (auto const& entry : ghc::filesystem::directory_iterator(dir)) {
-        // recursively search directories
-        if (ghc::filesystem::is_directory(entry) && recursive) {
-            this->loadModsFromDirectory(entry.path(), true);
-            continue;
-        }
+void Loader::Impl::queueMods(std::vector<ModMetadata>& modQueue) {
+    this->queueInternalMods(modQueue);
 
-        // skip this entry if it's not a file
-        if (!ghc::filesystem::is_regular_file(entry)) {
-            continue;
-        }
+    for (auto const& dir : m_modSearchDirectories) {
+        log::debug("Searching {}", dir);
+        log::NestScope nest;
+        for (auto const& entry : std::filesystem::directory_iterator(dir)) {
+            if (!std::filesystem::is_regular_file(entry) ||
+                entry.path().extension() != GEODE_MOD_EXTENSION)
+                continue;
 
-        // skip this entry if its extension is not .geode
-        if (entry.path().extension() != GEODE_MOD_EXTENSION) {
-            continue;
-        }
-        // skip this entry if it's already loaded
-        if (map::contains<std::string, Mod*>(m_mods, [entry](Mod* p) -> bool {
-            return p->m_impl->m_info.path() == entry.path();
-        })) {
-            continue;
-        }
+            m_hasExternalMods = true;
 
-        // if mods should be loaded immediately, do that
-        if (m_earlyLoadFinished) {
-            auto load = this->loadModFromFile(entry);
-            if (!load) {
-                log::error("Unable to load {}: {}", entry, load.unwrapErr());
-            }
-        }
-        // otherwise collect mods to load first to make sure the correct 
-        // versions of the mods are loaded and that early-loaded mods are 
-        // loaded early
-        else {
-            auto res = ModInfo::createFromGeodeFile(entry.path());
+            log::debug("Found {}", entry.path().filename());
+            log::NestScope nest;
+
+            auto res = ModMetadata::createFromGeodeFile(entry.path());
             if (!res) {
-                m_invalidMods.push_back(InvalidGeodeFile {
-                    .path = entry.path(),
-                    .reason = res.unwrapErr(),
+                this->addProblem({
+                    LoadProblem::Type::InvalidFile,
+                    entry.path(),
+                    res.unwrapErr()
                 });
+                log::error("Failed to queue: {}", res.unwrapErr());
                 continue;
             }
-            auto info = res.unwrap();
+            auto modMetadata = res.unwrap();
 
-            // skip this entry if it's already set to be loaded
-            if (ranges::contains(m_modsToLoad, info)) {
+            log::debug("id: {}", modMetadata.getID());
+            log::debug("version: {}", modMetadata.getVersion());
+            log::debug("early: {}", modMetadata.needsEarlyLoad() ? "yes" : "no");
+
+            if (std::find_if(modQueue.begin(), modQueue.end(), [&](auto& item) {
+                    return modMetadata.getID() == item.getID();
+                }) != modQueue.end()) {
+                this->addProblem({
+                    LoadProblem::Type::Duplicate,
+                    modMetadata,
+                    "A mod with the same ID is already present."
+                });
+                log::error("Failed to queue: a mod with the same ID is already queued");
                 continue;
             }
 
-            // add to list of mods to load
-            m_modsToLoad.push_back(info);
+            modQueue.push_back(modMetadata);
         }
     }
 }
 
-void Loader::Impl::refreshModsList() {
-    log::debug("Loading mods...");
-
-    // find mods
-    for (auto& dir : m_modSearchDirectories) {
-        this->loadModsFromDirectory(dir);
+void Loader::Impl::populateModList(std::vector<ModMetadata>& modQueue) {
+    std::vector<std::string> toRemove;
+    for (auto& [id, mod] : m_mods) {
+        if (mod->isInternal())
+            continue;
+        delete mod;
+        toRemove.push_back(id);
     }
-    
-    // load early-load mods first
-    for (auto& mod : m_modsToLoad) {
-        if (mod.needsEarlyLoad()) {
-            auto load = this->loadModFromInfo(mod);
-            if (!load) {
-                log::error("Unable to load {}: {}", mod.id(), load.unwrapErr());
+    for (auto const& id : toRemove) {
+        m_mods.erase(id);
+    }
 
-                m_invalidMods.push_back(InvalidGeodeFile {
-                    .path = mod.path(),
-                    .reason = load.unwrapErr(),
+    for (auto const& metadata : modQueue) {
+        log::debug("{} {}", metadata.getID(), metadata.getVersion());
+        log::NestScope nest;
+
+        auto mod = new Mod(metadata);
+
+        auto res = mod->m_impl->setup();
+        if (!res) {
+            this->addProblem({
+                LoadProblem::Type::SetupFailed,
+                mod,
+                res.unwrapErr()
+            });
+            log::error("Failed to set up: {}", res.unwrapErr());
+            continue;
+        }
+
+        m_mods.insert({metadata.getID(), mod});
+    }
+}
+
+void Loader::Impl::buildModGraph() {
+    for (auto const& [id, mod] : m_mods) {
+        log::debug("{}", mod->getID());
+        log::NestScope nest;
+        for (auto& dependency : mod->m_impl->m_metadata.m_impl->m_dependencies) {
+            log::debug("{}", dependency.id);
+            if (!m_mods.contains(dependency.id)) {
+                dependency.mod = nullptr;
+                continue;
+            }
+
+            dependency.mod = m_mods[dependency.id];
+
+            if (!dependency.version.compare(dependency.mod->getVersion())) {
+                dependency.mod = nullptr;
+                continue;
+            }
+
+            if (
+                dependency.importance != ModMetadata::Dependency::Importance::Required ||
+                dependency.mod == nullptr
+            )
+                continue;
+
+            dependency.mod->m_impl->m_dependants.push_back(mod);
+        }
+        for (auto& incompatibility : mod->m_impl->m_metadata.m_impl->m_incompatibilities) {
+            incompatibility.mod =
+                m_mods.contains(incompatibility.id) ? m_mods[incompatibility.id] : nullptr;
+        }
+    }
+}
+
+void Loader::Impl::loadModGraph(Mod* node, bool early) {
+    // Check version first, as it's not worth trying to load a mod with an
+    // invalid target version
+    // Also this makes it so that when GD updates, outdated mods get shown as
+    // "Outdated" in the UI instead of "Missing Dependencies"
+    auto res = node->getMetadataRef().checkGameVersion();
+    if (!res) {
+        this->addProblem({
+            LoadProblem::Type::UnsupportedVersion,
+            node,
+            res.unwrapErr()
+        });
+        log::error("{}", res.unwrapErr());
+        return;
+    }
+
+    auto geodeVerRes = node->getMetadataRef().checkGeodeVersion();
+    if (!geodeVerRes) {
+        this->addProblem({
+            node->getMetadataRef().getGeodeVersion() > this->getVersion() ?
+                LoadProblem::Type::NeedsNewerGeodeVersion :
+                LoadProblem::Type::UnsupportedGeodeVersion,
+            node,
+            geodeVerRes.unwrapErr()
+        });
+        log::error("{}", geodeVerRes.unwrapErr());
+        return;
+    }
+
+    if (node->hasUnresolvedDependencies()) {
+        log::warn("{} {} has unresolved dependencies", node->getID(), node->getVersion());
+        return;
+    }
+    if (node->hasUnresolvedIncompatibilities()) {
+        log::warn("{} {} has unresolved incompatibilities", node->getID(), node->getVersion());
+        return;
+    }
+
+    log::NestScope nest;
+
+    if (node->isEnabled()) {
+        log::error("Mod {} already loaded, this should never happen", node->getID());
+        return;
+    }
+
+    m_currentlyLoadingMod = node;
+    m_refreshingModCount += 1;
+    m_refreshedModCount += 1;
+    m_lateRefreshedModCount += early ? 0 : 1;
+
+    auto unzipFunction = [this, node]() -> Result<void, std::string> {
+        auto skipUnzip = node->isInternal();
+        if (skipUnzip) {
+            return Ok();
+        }
+
+        log::debug("Unzipping .geode file");
+        auto res = this->unzipGeodeFile(node->getMetadataRef());
+        return res;
+    };
+
+    auto loadFunction = [this, node, early]() {
+        if (node->shouldLoad()) {
+            log::debug("Loading binary");
+            auto res = node->m_impl->loadBinary();
+            if (!res) {
+                this->addProblem({
+                    LoadProblem::Type::LoadFailed,
+                    node,
+                    res.unwrapErr()
                 });
+                log::error("Failed to load binary: {}", res.unwrapErr());
+                m_refreshingModCount -= 1;
+                return;
             }
         }
-    }
 
-    // UI can be loaded now
-    m_earlyLoadFinished = true;
-    m_earlyLoadFinishedCV.notify_all();
+        m_refreshingModCount -= 1;
+    };
 
-    // load the rest of the mods
-    for (auto& mod : m_modsToLoad) {
-        if (!mod.needsEarlyLoad()) {
-            auto load = this->loadModFromInfo(mod);
-            if (!load) {
-                log::error("Unable to load {}: {}", mod.id(), load.unwrapErr());
-
-                m_invalidMods.push_back(InvalidGeodeFile {
-                    .path = mod.path(),
-                    .reason = load.unwrapErr(),
-                });
-            }
+    {   // version checking
+        if (auto reason = node->getMetadataRef().m_impl->m_softInvalidReason) {
+            this->addProblem({
+                LoadProblem::Type::InvalidFile,
+                node,
+                reason.value()
+            });
+            log::error("{}", reason.value());
+            m_refreshingModCount -= 1;
+            return;
         }
     }
-    m_modsToLoad.clear();
-}
 
-void Loader::Impl::updateAllDependencies() {
-    for (auto const& [_, mod] : m_mods) {
-        (void)mod->updateDependencies();
+    if (early) {
+        auto res = unzipFunction();
+        if (!res) {
+            this->addProblem({
+                LoadProblem::Type::UnzipFailed,
+                node,
+                res.unwrapErr()
+            });
+            log::error("Failed to unzip: {}", res.unwrapErr());
+            m_refreshingModCount -= 1;
+            return;
+        }
+        loadFunction();
+    }
+    else {
+        auto nest = log::saveNest();
+        std::thread([=, this]() {
+            thread::setName("Mod Unzip");
+            log::loadNest(nest);
+            auto res = unzipFunction();
+            this->queueInMainThread([=, this, res = std::move(res)]() {
+                auto prevNest = log::saveNest();
+                log::loadNest(nest);
+                if (!res) {
+                    this->addProblem({
+                        LoadProblem::Type::UnzipFailed,
+                        node,
+                        res.unwrapErr()
+                    });
+                    log::error("Failed to unzip: {}", res.unwrapErr());
+                    m_refreshingModCount -= 1;
+                    log::loadNest(prevNest);
+                    return;
+                }
+                loadFunction();
+                log::loadNest(prevNest);
+            });
+        }).detach();
     }
 }
 
-void Loader::Impl::waitForModsToBeLoaded() {
-    auto lock = std::unique_lock(m_earlyLoadFinishedMutex);
-    log::debug("Waiting for mods to be loaded... {}", bool(m_earlyLoadFinished));
-    m_earlyLoadFinishedCV.wait(lock, [this] {
-        return bool(m_earlyLoadFinished);
+void Loader::Impl::findProblems() {
+    for (auto const& [id, mod] : m_mods) {
+        if (!mod->shouldLoad()) {
+            log::debug("{} is not enabled", id);
+            continue;
+        }
+        if (mod->targetsOutdatedVersion()) {
+            log::warn("{} is outdated", id);
+            continue;
+        }
+        log::debug("{}", id);
+        log::NestScope nest;
+
+        for (auto const& dep : mod->getMetadataRef().getDependencies()) {
+            if (dep.mod && dep.mod->isEnabled() && dep.version.compare(dep.mod->getVersion()))
+                continue;
+
+            auto dismissKey = fmt::format("dismiss-optional-dependency-{}-for-{}", dep.id, id);
+
+            switch(dep.importance) {
+                case ModMetadata::Dependency::Importance::Suggested:
+                    if (!Mod::get()->getSavedValue<bool>(dismissKey)) {
+                        this->addProblem({
+                            LoadProblem::Type::Suggestion,
+                            mod,
+                            fmt::format("{} {}", dep.id, dep.version.toString())
+                        });
+                        log::info("{} suggests {} {}", id, dep.id, dep.version);
+                    }
+                    else {
+                        log::debug("{} suggests {} {}, but that suggestion was dismissed", id, dep.id, dep.version);
+                    }
+                    break;
+                case ModMetadata::Dependency::Importance::Recommended:
+                    if (!Mod::get()->getSavedValue<bool>(dismissKey)) {
+                        this->addProblem({
+                            LoadProblem::Type::Recommendation,
+                            mod,
+                            fmt::format("{} {}", dep.id, dep.version.toString())
+                        });
+                        log::info("{} recommends {} {}", id, dep.id, dep.version);
+                    }
+                    else {
+                        log::debug("{} recommends {} {}, but that suggestion was dismissed", id, dep.id, dep.version);
+                    }
+                    break;
+                case ModMetadata::Dependency::Importance::Required:
+                    if(m_mods.find(dep.id) == m_mods.end()) {
+                        this->addProblem({
+                            LoadProblem::Type::MissingDependency,
+                            mod,
+                            fmt::format("{}", dep.id)
+                        });
+                        log::error("{} requires {} {}", id, dep.id, dep.version);
+                        break;
+                    } else {
+                        auto installedDependency = m_mods.at(dep.id);
+
+                        if(!installedDependency->isEnabled()) {
+                            this->addProblem({
+                                LoadProblem::Type::DisabledDependency,
+                                mod,
+                                fmt::format("{}", dep.id)
+                            });
+                            log::error("{} requires {} {}", id, dep.id, dep.version);
+                            break;
+                        } else if(dep.version.compareWithReason(installedDependency->getVersion()) == VersionCompareResult::TooOld) {
+                            this->addProblem({
+                                LoadProblem::Type::OutdatedDependency,
+                                mod,
+                                fmt::format("{}", dep.id)
+                            });
+                            log::error("{} requires {} {}", id, dep.id, dep.version);
+                            break;
+                        } else {
+                            // fires on major mismatch or too new version of dependency
+                            this->addProblem({
+                                LoadProblem::Type::MissingDependency,
+                                mod,
+                                fmt::format("{} {}", dep.id, dep.version)
+                            });
+                            log::error("{} requires {} {}", id, dep.id, dep.version);
+                            break;
+                        }
+                    }
+            }
+        }
+
+        for (auto const& dep : mod->getMetadataRef().getIncompatibilities()) {
+            if (!dep.mod || !dep.version.compare(dep.mod->getVersion()) || !dep.mod->shouldLoad())
+                continue;
+            switch(dep.importance) {
+                case ModMetadata::Incompatibility::Importance::Conflicting: {
+                    this->addProblem({
+                        dep.version.toString()[0] == '<' ? LoadProblem::Type::OutdatedConflict : LoadProblem::Type::Conflict,
+                        mod,
+                        fmt::format("{}", dep.id)
+                    });
+                    log::warn("{} conflicts with {} {}", id, dep.id, dep.version);
+                } break;
+
+                case ModMetadata::Incompatibility::Importance::Breaking: {
+                    this->addProblem({
+                        dep.version.toString()[0] == '<' ? LoadProblem::Type::OutdatedIncompatibility : LoadProblem::Type::PresentIncompatibility,
+                        mod,
+                        fmt::format("{}", dep.id)
+                    });
+                    log::error("{} breaks {} {}", id, dep.id, dep.version);
+                } break;
+
+                case ModMetadata::Incompatibility::Importance::Superseded: {
+                    this->addProblem({
+                        LoadProblem::Type::PresentIncompatibility,
+                        mod,
+                        fmt::format("{}", dep.id)
+                    });
+                    log::error("{} supersedes {} {}", id, dep.id, dep.version);
+                } break;
+            }
+        }
+
+        Mod* myEpicMod = mod; // clang fix
+        // if the mod is not loaded but there are no problems related to it
+        if (!mod->isEnabled() &&
+            mod->shouldLoad() &&
+            !std::any_of(m_problems.begin(), m_problems.end(), [myEpicMod](auto& item) {
+                return std::holds_alternative<ModMetadata>(item.cause) &&
+                    std::get<ModMetadata>(item.cause).getID() == myEpicMod->getID() ||
+                    std::holds_alternative<Mod*>(item.cause) &&
+                    std::get<Mod*>(item.cause) == myEpicMod;
+            })) {
+            this->addProblem({
+                LoadProblem::Type::Unknown,
+                mod,
+                ""
+            });
+            log::error("{} failed to load for an unknown reason", id);
+        }
+    }
+}
+
+void Loader::Impl::refreshModGraph() {
+    log::NestScope nest;
+
+    if (m_isSetup) {
+        log::error("Cannot refresh mod graph after startup");
+        return;
+    }
+
+    auto begin = std::chrono::high_resolution_clock::now();
+
+    m_problems.clear();
+
+    m_loadingState = LoadingState::Queue;
+    log::info("Queueing mods");
+    std::vector<ModMetadata> modQueue;
+    {
+        log::NestScope nest;
+        this->queueMods(modQueue);
+    }
+
+    m_loadingState = LoadingState::List;
+    log::info("Populating mod list");
+    {
+        log::NestScope nest;
+        this->populateModList(modQueue);
+        modQueue.clear();
+    }
+
+    m_loadingState = LoadingState::Graph;
+    log::info("Building mod graph");
+    {
+        log::NestScope nest;
+        this->buildModGraph();
+    }
+
+    log::info("Ordering mod stack");
+    {
+        log::NestScope nest;
+        this->orderModStack();
+    }
+
+    m_loadingState = LoadingState::EarlyMods;
+    log::info("Loading early mods");
+    {
+        log::NestScope nest;
+        while (!m_modsToLoad.empty() && m_modsToLoad.front()->needsEarlyLoad()) {
+            auto mod = m_modsToLoad.front();
+            m_modsToLoad.pop_front();
+            log::info("Loading mod {} {}", mod->getID(), mod->getVersion());
+            this->loadModGraph(mod, true);
+        }
+    }
+
+    auto end = std::chrono::high_resolution_clock::now();
+    auto time = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
+    log::debug("Took {}s. Continuing next frame...", static_cast<float>(time) / 1000.f);
+
+    m_loadingState = LoadingState::Mods;
+
+    queueInMainThread([this]() {
+        log::info("Loading non-early mods");
+        this->continueRefreshModGraph();
     });
 }
 
-bool Loader::Impl::didLastLaunchCrash() const {
-    return crashlog::didLastLaunchCrash();
+void Loader::Impl::orderModStack() {
+    std::unordered_set<Mod*> visited;
+    visited.insert(Mod::get());
+    Mod* selectedMod = nullptr;
+    do {
+        selectedMod = nullptr;
+        for (auto const& mod : ModImpl::get()->m_dependants) {
+            if (visited.count(mod) != 0) continue;
+
+            for (auto dep : mod->getMetadataRef().getDependencies()) {
+                if (dep.mod && dep.importance == ModMetadata::Dependency::Importance::Required &&
+                    visited.count(dep.mod) == 0) {
+                    // the dependency is not visited yet
+                    // so we cant select this mod
+                    goto skip_mod;
+                }
+            }
+
+            if (selectedMod) {
+                if (
+                    !selectedMod->m_impl->needsEarlyLoad() &&
+                    mod->m_impl->needsEarlyLoad()
+                ) {
+                    // this mod is implied to be loaded early
+                    // so we can override a mod that is not
+                    selectedMod = mod;
+                }
+            }
+            else {
+                selectedMod = mod;
+            }
+
+        skip_mod:
+            continue;
+        }
+
+        if (selectedMod) {
+            m_modsToLoad.push_back(selectedMod);
+            visited.insert(selectedMod);
+        }
+    } while (selectedMod != nullptr);
+
+    for (auto mod : m_modsToLoad) {
+        log::debug("{}, early: {}", mod->getID(), mod->needsEarlyLoad());
+    }
 }
 
-void Loader::Impl::reset() {
-    this->closePlatformConsole();
+void Loader::Impl::continueRefreshModGraph() {
+    if (m_refreshingModCount != 0) {
+        queueInMainThread([this]() {
+            this->continueRefreshModGraph();
+        });
+        return;
+    }
 
+    if  (m_lateRefreshedModCount > 0) {
+        auto end = std::chrono::high_resolution_clock::now();
+        auto time = std::chrono::duration_cast<std::chrono::milliseconds>(end - m_timerBegin).count();
+        log::debug("Took {}s", static_cast<float>(time) / 1000.f);
+    }
+
+    log::debug("Continuing mod graph refresh...");
+    log::NestScope nest;
+
+    m_timerBegin = std::chrono::high_resolution_clock::now();
+
+    switch (m_loadingState) {
+        case LoadingState::Mods:
+            if (!m_modsToLoad.empty()) {
+                auto mod = m_modsToLoad.front();
+                m_modsToLoad.pop_front();
+                log::info("Loading mod {} {}", mod->getID(), mod->getVersion());
+                this->loadModGraph(mod, false);
+                break;
+            }
+            m_loadingState = LoadingState::Problems;
+            [[fallthrough]];
+        case LoadingState::Problems:
+            log::info("Finding problems");
+            {
+                log::NestScope nest;
+                this->findProblems();
+            }
+            m_loadingState = LoadingState::Done;
+            {
+                auto end = std::chrono::high_resolution_clock::now();
+                auto time = std::chrono::duration_cast<std::chrono::milliseconds>(end - m_timerBegin).count();
+                log::debug("Took {}s", static_cast<float>(time) / 1000.f);
+            }
+            break;
+        default:
+            m_loadingState = LoadingState::Done;
+            log::warn("Impossible loading state, resetting to 'Done'! "
+                "Was Loader::Impl::continueRefreshModGraph() called from the wrong place?");
+            break;
+    }
+
+    if (m_loadingState != LoadingState::Done) {
+        queueInMainThread([this]() {
+            this->continueRefreshModGraph();
+        });
+    }
+}
+
+std::vector<LoadProblem> Loader::Impl::getProblems() const {
+    return m_problems;
+}
+
+void Loader::Impl::forceReset() {
     for (auto& [_, mod] : m_mods) {
         delete mod;
     }
     m_mods.clear();
-    log::Logger::clear();
-    ghc::filesystem::remove_all(dirs::getModRuntimeDir());
-    ghc::filesystem::remove_all(dirs::getTempDir());
+    log::Logger::get()->clear();
+    std::filesystem::remove_all(dirs::getModRuntimeDir());
+    std::filesystem::remove_all(dirs::getTempDir());
 }
 
 bool Loader::Impl::isReadyToHook() const {
     return m_readyToHook;
 }
 
-void Loader::Impl::addInternalHook(Hook* hook, Mod* mod) {
-    m_internalHooks.push_back({hook, mod});
+void Loader::Impl::addUninitializedHook(Hook* hook, Mod* mod) {
+    m_uninitializedHooks.emplace_back(hook, mod);
+}
+
+static bool isPlatformBinary(std::string_view modID, std::string_view filename) {
+    if (!filename.starts_with(modID)) {
+        return false;
+    }
+
+    return filename.ends_with(".dll")
+        || filename.ends_with(".dylib")
+        || filename.ends_with(".android32.so")
+        || filename.ends_with(".android64.so")
+        || filename.ends_with(".ios.dylib");
+}
+
+Result<> Loader::Impl::unzipGeodeFile(ModMetadata metadata) {
+    // Unzip .geode file into temp dir
+    auto tempDir = dirs::getModRuntimeDir() / metadata.getID();
+
+    auto datePath = tempDir / "modified-at";
+    std::string currentHash = file::readString(datePath).unwrapOr("");
+
+    std::error_code ec;
+    auto modifiedDate = std::filesystem::last_write_time(metadata.getPath(), ec);
+    if (ec) {
+        auto message = formatSystemError(ec.value());
+        return Err("Unable to get last modified time of zip: " + message);
+    }
+    auto modifiedCount = std::chrono::duration_cast<std::chrono::milliseconds>(modifiedDate.time_since_epoch());
+    auto modifiedHash = std::to_string(modifiedCount.count());
+    if (currentHash == modifiedHash) {
+        log::debug("Same hash detected, skipping unzip");
+        return Ok();
+    }
+    log::debug("Hash mismatch detected, unzipping");
+
+    std::filesystem::remove_all(tempDir, ec);
+    if (ec) {
+        auto message = formatSystemError(ec.value());
+        return Err("Unable to delete temp dir: " + message);
+    }
+
+    (void)utils::file::createDirectoryAll(tempDir);
+
+    GEODE_UNWRAP_INTO(auto unzip, file::Unzip::create(metadata.getPath()));
+    if (!unzip.hasEntry(metadata.getBinaryName())) {
+        return Err(
+            fmt::format("Unable to find platform binary under the name \"{}\"", metadata.getBinaryName())
+        );
+    }
+    GEODE_UNWRAP(unzip.extractAllTo(tempDir));
+
+    // Delete binaries for other platforms since they're pointless
+    // The if should never fail, but you never know
+    for (auto& entry : std::filesystem::directory_iterator(tempDir)) {
+        if (entry.is_directory()) {
+            continue;
+        }
+
+        const std::string filename = geode::utils::string::pathToString(entry.path().filename());
+        if (filename == metadata.getBinaryName() || !isPlatformBinary(metadata.getID(), filename)) {
+            continue;
+        }
+
+        // The binary is not for our platform, delete!
+        // We don't really care if the deletion succeeds though.
+        std::error_code ec;
+        std::filesystem::remove(entry.path(), ec);
+    }
+
+    // Check if there is a binary that we need to move over from the unzipped binaries dir
+    if (this->isPatchless()) {
+        // TODO: enable in 4.7.0
+        // auto src = dirs::getModBinariesDir() / metadata.getBinaryName();
+        auto src = dirs::getModRuntimeDir() / "binaries" / metadata.getBinaryName();
+        auto dst = tempDir / metadata.getBinaryName();
+        if (std::filesystem::exists(src)) {
+            std::error_code ec;
+            std::filesystem::rename(src, dst, ec);
+            if (ec) {
+                auto message = formatSystemError(ec.value());
+                return Err(
+                    fmt::format("Failed to move binary from {} to {}: {}", src.string(), dst.string(), message)
+                );
+            }
+        }
+    }
+
+    auto res = file::writeString(datePath, modifiedHash);
+    if (!res) {
+        log::warn("Failed to write modified date of geode zip, will try to unzip next launch: {}", res.unwrapErr());
+    }
+
+    return Ok();
+}
+
+Result<> Loader::Impl::extractBinary(ModMetadata metadata) {
+    if (!this->isPatchless()) {
+        // If we are not patchless, there is no need to extract the binary separately
+        return Ok();
+    }
+
+    // Extract the binary from the .geode file
+    GEODE_UNWRAP_INTO(auto unzip, file::Unzip::create(metadata.getPath()));
+    if (!unzip.hasEntry(metadata.getBinaryName())) {
+        return Err(
+            fmt::format("Unable to find platform binary under the name \"{}\"", metadata.getBinaryName())
+        );
+    }
+    // TODO: enable in 4.7.0
+    // GEODE_UNWRAP(unzip.extractTo(metadata.getBinaryName(), dirs::getModBinariesDir() / metadata.getBinaryName()));
+    GEODE_UNWRAP(unzip.extractTo(metadata.getBinaryName(), dirs::getModRuntimeDir() / "binaries" / metadata.getBinaryName()));
+
+    return Ok();
 }
 
 bool Loader::Impl::loadHooks() {
     m_readyToHook = true;
-    auto thereWereErrors = false;
-    for (auto const& hook : m_internalHooks) {
-        auto res = hook.second->addHook(hook.first);
+    bool hadErrors = false;
+    for (auto const& [hook, mod] : m_uninitializedHooks) {
+        auto res = hook->enable();
         if (!res) {
-            log::internalLog(Severity::Error, hook.second, "{}", res.unwrapErr());
-            thereWereErrors = true;
+            log::logImpl(Severity::Error, mod, "{}", res.unwrapErr());
+            hadErrors = true;
         }
     }
-    // free up memory
-    m_internalHooks.clear();
-    return !thereWereErrors;
+    m_uninitializedHooks.clear();
+    return !hadErrors;
 }
 
-void Loader::Impl::queueInGDThread(ScheduledFunction func) {
-    std::lock_guard<std::mutex> lock(m_gdThreadMutex);
-    m_gdThreadQueue.push_back(func);
+void Loader::Impl::queueInMainThread(ScheduledFunction&& func) {
+    std::lock_guard<std::mutex> lock(m_mainThreadMutex);
+    m_mainThreadQueue.push_back(std::forward<ScheduledFunction>(func));
 }
 
-void Loader::Impl::executeGDThreadQueue() {
-    // copy queue to avoid locking mutex if someone is
-    // running addToGDThread inside their function
-    m_gdThreadMutex.lock();
-    auto queue = m_gdThreadQueue;
-    m_gdThreadQueue.clear();
-    m_gdThreadMutex.unlock();
+void Loader::Impl::executeMainThreadQueue() {
+    // move queue to avoid locking mutex if someone is
+    // running addToMainThread inside their function
+    m_mainThreadMutex.lock();
+    auto queue = std::move(m_mainThreadQueue);
+    m_mainThreadQueue = {};
+    m_mainThreadMutex.unlock();
 
     // call queue
     for (auto const& func : queue) {
         func();
     }
 }
-
-void Loader::Impl::logConsoleMessage(std::string const& msg) {
-    if (m_platformConsoleOpen) {
-        // TODO: make flushing optional
-        std::cout << msg << '\n' << std::flush;
-    }
-}
-
-bool Loader::Impl::platformConsoleOpen() const {
-    return m_platformConsoleOpen;
-}
-
-void Loader::Impl::fetchLatestGithubRelease(
-    utils::MiniFunction<void(json::Value const&)> then,
-    utils::MiniFunction<void(std::string const&)> expect
-) {
-    if (m_latestGithubRelease) {
-        return then(m_latestGithubRelease.value());
-    }
-    // TODO: add header to not get rate limited
-    web::AsyncWebRequest()
-        .join("loader-auto-update-check")
-        .fetch("https://api.github.com/repos/geode-sdk/geode/releases/latest")
-        .json()
-        .then([this, then](json::Value const& json) {
-            m_latestGithubRelease = json;
-            then(json);
-        })
-        .expect(expect);
-}
-
-void Loader::Impl::tryDownloadLoaderResources(
-    std::string const& url,
-    bool tryLatestOnError
-) {
-    auto tempResourcesZip = dirs::getTempDir() / "new.zip";
-    auto resourcesDir = dirs::getGeodeResourcesDir() / Mod::get()->getID();
-
-    web::AsyncWebRequest()
-        // use the url as a join handle
-        .join(url)
-        .fetch(url)
-        .into(tempResourcesZip)
-        .then([tempResourcesZip, resourcesDir, this](auto) {
-            // unzip resources zip
-            auto unzip = file::Unzip::intoDir(tempResourcesZip, resourcesDir, true);
-            if (!unzip) {
-                ResourceDownloadEvent(
-                    UpdateFailed("Unable to unzip new resources: " + unzip.unwrapErr())
-                ).post();
-                return;
-            }
-            this->updateSpecialFiles();
-
-            ResourceDownloadEvent(UpdateFinished()).post();
-        })
-        .expect([this, tryLatestOnError](std::string const& info, int code) {
-            // if the url was not found, try downloading latest release instead
-            // (for development versions)
-            if (code == 404 && tryLatestOnError) {
-                this->downloadLoaderResources(true);
-            }
-            else {
-                ResourceDownloadEvent(
-                    UpdateFailed("Unable to download resources: " + info)
-                ).post();
-            }
-        })
-        .progress([](auto&, double now, double total) {
-            ResourceDownloadEvent(
-                UpdateProgress(
-                    static_cast<uint8_t>(now / total * 100.0),
-                    "Downloading resources"
-                )
-            ).post();
-        });
-}
-
-void Loader::Impl::updateSpecialFiles() {
-    auto resourcesDir = dirs::getGeodeResourcesDir() / Mod::get()->getID();
-    auto res = ModInfoImpl::getImpl(ModImpl::get()->m_info).addSpecialFiles(resourcesDir);
-    if (res.isErr()) {
-        log::warn("Unable to add special files: {}", res.unwrapErr());
-    }
-}
-
-void Loader::Impl::downloadLoaderResources(bool useLatestRelease) {
-    if (!useLatestRelease) {
-        this->tryDownloadLoaderResources(fmt::format(
-            "https://github.com/geode-sdk/geode/releases/download/{}/resources.zip",
-            this->getVersion().toString()
-        ));
-    }
-    else {
-        fetchLatestGithubRelease(
-            [this](json::Value const& raw) {
-                auto json = raw;
-                JsonChecker checker(json);
-                auto root = checker.root("[]").obj();
-
-                // find release asset
-                for (auto asset : root.needs("assets").iterate()) {
-                    auto obj = asset.obj();
-                    if (obj.needs("name").template get<std::string>() == "resources.zip") {
-                        this->tryDownloadLoaderResources(
-                            obj.needs("browser_download_url").template get<std::string>(),
-                            false
-                        );
-                        return;
-                    }
-                }
-
-                ResourceDownloadEvent(
-                    UpdateFailed("Unable to find resources in latest GitHub release")
-                ).post();
-            },
-            [this](std::string const& info) {
-                ResourceDownloadEvent(
-                    UpdateFailed("Unable to download resources: " + info)
-                ).post();
-            }
-        );
-    }
-}
-
-bool Loader::Impl::verifyLoaderResources() {
-    static std::optional<bool> CACHED = std::nullopt;
-    if (CACHED.has_value()) {
-        return CACHED.value();
-    }
-
-    // geode/resources/geode.loader
-    auto resourcesDir = dirs::getGeodeResourcesDir() / Mod::get()->getID();
-
-    // if the resources dir doesn't exist, then it's probably incorrect
-    if (!(
-        ghc::filesystem::exists(resourcesDir) &&
-        ghc::filesystem::is_directory(resourcesDir)
-    )) {
-        log::debug("Resources directory does not exist");
-        this->downloadLoaderResources();
-        return false;
-    }
-
-    // TODO: actually have a proper way to disable checking resources
-    // for development builds
-    if (ghc::filesystem::exists(resourcesDir / "dont-update.txt")) {
-        // this is kind of a hack, but it's the easiest way to prevent
-        // auto update while developing
-        log::debug("Not updating resources since dont-update.txt exists");
-        return true;
-    }
-
-    // make sure every file was covered
-    size_t coverage = 0;
-
-    // verify hashes
-    for (auto& file : ghc::filesystem::directory_iterator(resourcesDir)) {
-        auto name = file.path().filename().string();
-        // skip unknown files
-        if (!LOADER_RESOURCE_HASHES.count(name)) {
-            continue;
-        }
-        // verify hash
-        auto hash = calculateSHA256(file.path());
-        auto expected = LOADER_RESOURCE_HASHES.at(name);
-        if (hash != expected) {
-            log::debug("Resource hash mismatch: {} ({}, {})", name, hash.substr(0, 7), expected.substr(0, 7));
-            this->downloadLoaderResources();
-            return false;
-        }
-        coverage += 1;
-    }
-
-    // make sure every file was found
-    if (coverage != LOADER_RESOURCE_HASHES.size()) {
-        log::debug("Resource coverage mismatch");
-        this->downloadLoaderResources();
-        return false;
-    }
-
-    return true;
-}
-
-void Loader::Impl::downloadLoaderUpdate(std::string const& url) {
-    auto updateZip = dirs::getTempDir() / "loader-update.zip";
-    auto targetDir = dirs::getGeodeDir() / "update";
-
-    web::AsyncWebRequest()
-        .join("loader-update-download")
-        .fetch(url)
-        .into(updateZip)
-        .then([this, updateZip, targetDir](auto) {
-            // unzip resources zip
-            auto unzip = file::Unzip::intoDir(updateZip, targetDir, true);
-            if (!unzip) {
-                LoaderUpdateEvent(
-                    UpdateFailed("Unable to unzip update: " + unzip.unwrapErr())
-                ).post();
-                return;
-            }
-            m_isNewUpdateDownloaded = true;
-            LoaderUpdateEvent(UpdateFinished()).post();
-        })
-        .expect([](std::string const& info) {
-            LoaderUpdateEvent(
-                UpdateFailed("Unable to download update: " + info)
-            ).post();
-        })
-        .progress([](auto&, double now, double total) {
-            LoaderUpdateEvent(
-                UpdateProgress(
-                    static_cast<uint8_t>(now / total * 100.0),
-                    "Downloading update"
-                )
-            ).post();
-        });
-}
-
-void Loader::Impl::checkForLoaderUpdates() {
-    // Check for updates in the background
-    fetchLatestGithubRelease(
-        [this](json::Value const& raw) {
-            auto json = raw;
-            JsonChecker checker(json);
-            auto root = checker.root("[]").obj();
-
-            VersionInfo ver { 0, 0, 0 };
-            root.needs("tag_name").into(ver);
-
-            // make sure release is newer
-            if (ver <= this->getVersion()) {
-                return;
-            }
-
-            // don't auto-update major versions
-            if (ver.getMajor() > this->getVersion().getMajor()) {
-                return;
-            }
-
-            // find release asset
-            for (auto asset : root.needs("assets").iterate()) {
-                auto obj = asset.obj();
-                if (string::contains(
-                    obj.needs("name").template get<std::string>(),
-                    GEODE_PLATFORM_SHORT_IDENTIFIER
-                )) {
-                    this->downloadLoaderUpdate(
-                        obj.needs("browser_download_url").template get<std::string>()
-                    );
-                    return;
-                }
-            }
-
-            LoaderUpdateEvent(
-                UpdateFailed("Unable to find release asset for " GEODE_PLATFORM_NAME)
-            ).post();
-        },
-        [](std::string const& info) {
-            LoaderUpdateEvent(
-                UpdateFailed("Unable to check for updates: " + info)
-            ).post();
-        }
-    );
-}
-
-bool Loader::Impl::isNewUpdateDownloaded() const {
-    return m_isNewUpdateDownloaded;
-}
-    
-json::Value Loader::Impl::processRawIPC(void* rawHandle, std::string const& buffer) {
-    json::Value reply;
-
-    json::Value json;
-    try {
-        json = json::parse(buffer);
-    } catch (...) {
-        log::warn("Received IPC message that isn't valid JSON");
-        return reply;
-    }
-
-    if (!json.contains("mod") || !json["mod"].is_string()) {
-        log::warn("Received IPC message without 'mod' field");
-        return reply;
-    }
-    if (!json.contains("message") || !json["message"].is_string()) {
-        log::warn("Received IPC message without 'message' field");
-        return reply;
-    }
-    json::Value data;
-    if (json.contains("data")) {
-        data = json["data"];
-    }
-    // log::debug("Posting IPC event");
-    // ! warning: if the event system is ever made asynchronous this will break!
-    IPCEvent(rawHandle, json["mod"].as_string(), json["message"].as_string(), data, reply).post();
-    return reply;
-}
-
-ResourceDownloadEvent::ResourceDownloadEvent(
-    UpdateStatus const& status
-) : status(status) {}
-
-ListenerResult ResourceDownloadFilter::handle(
-    utils::MiniFunction<Callback> fn,
-    ResourceDownloadEvent* event
-) {
-    fn(event);
-    return ListenerResult::Propagate;
-}
-
-ResourceDownloadFilter::ResourceDownloadFilter() {}
-
-LoaderUpdateEvent::LoaderUpdateEvent(
-    UpdateStatus const& status
-) : status(status) {}
-
-ListenerResult LoaderUpdateFilter::handle(
-    utils::MiniFunction<Callback> fn,
-    LoaderUpdateEvent* event
-) {
-    fn(event);
-    return ListenerResult::Propagate;
-}
-
-LoaderUpdateFilter::LoaderUpdateFilter() {}
 
 void Loader::Impl::provideNextMod(Mod* mod) {
     m_nextModLock.lock();
@@ -815,50 +1086,441 @@ void Loader::Impl::provideNextMod(Mod* mod) {
 }
 
 Mod* Loader::Impl::takeNextMod() {
-    if (!m_nextMod) {
-        m_nextMod = this->createInternalMod();
-        log::debug("Created internal mod {}", m_nextMod->getName());
-    }
-    auto ret = m_nextMod;
-    return ret;
+    if (!m_nextMod)
+        m_nextMod = this->getInternalMod();
+    return m_nextMod;
 }
 
 void Loader::Impl::releaseNextMod() {
     m_nextMod = nullptr;
-
     m_nextModLock.unlock();
 }
 
+// TODO: Support for quoted launch args w/ spaces (this will be backwards compatible)
+// e.g. "--geode:arg=My spaced value"
+void Loader::Impl::initLaunchArguments() {
+    auto launchStr = this->getLaunchCommand();
 
-Result<> Loader::Impl::createHandler(void* address, tulip::hook::HandlerMetadata const& metadata) {
-    if (m_handlerHandles.count(address)) {
-        return Err("Handler already exists at address");
+    std::vector<std::string> arguments;
+    bool inQuotes = false;
+    std::string currentArg;
+    for (auto const c : launchStr) {
+        if (c == ' ' && !inQuotes) {
+            arguments.emplace_back(std::move(currentArg));
+            currentArg.clear();
+            continue;
+        }
+        if (c == '"') {
+            inQuotes = !inQuotes;
+            continue;
+        }
+        currentArg.push_back(c);
     }
+    arguments.emplace_back(std::move(currentArg));
 
-    GEODE_UNWRAP_INTO(auto handle, tulip::hook::createHandler(address, metadata));
-    m_handlerHandles[address] = handle;
-    return Ok();
+    for (const auto& arg : arguments) {
+        if (!arg.starts_with(LAUNCH_ARG_PREFIX)) {
+            continue;
+        }
+        auto pair = arg.substr(LAUNCH_ARG_PREFIX.size());
+        auto sep = pair.find('=');
+        if (sep == std::string::npos) {
+            m_launchArgs.insert({ pair, "true" });
+            continue;
+        }
+        auto key = pair.substr(0, sep);
+        auto value = pair.substr(sep + 1);
+        m_launchArgs.insert({ key, value });
+    }
+    for (const auto& pair : m_launchArgs) {
+        log::debug("Loaded '{}' as '{}'", pair.first, pair.second);
+    }
 }
 
-bool Loader::Impl::hasHandler(void* address) {
-    return m_handlerHandles.count(address) > 0;
+std::vector<std::string> Loader::Impl::getLaunchArgumentNames() const {
+    return map::keys(m_launchArgs);
+}
+
+bool Loader::Impl::hasLaunchArgument(std::string_view name) const {
+    return m_launchArgs.find(std::string(name)) != m_launchArgs.end();
+}
+
+std::optional<std::string> Loader::Impl::getLaunchArgument(std::string_view name) const {
+    auto value = m_launchArgs.find(std::string(name));
+    if (value == m_launchArgs.end()) {
+        return std::nullopt;
+    }
+    return std::optional(value->second);
+}
+
+bool Loader::Impl::getLaunchFlag(std::string_view name) const {
+    auto arg = this->getLaunchArgument(name);
+    return arg.has_value() && arg.value() == "true";
 }
 
 Result<tulip::hook::HandlerHandle> Loader::Impl::getHandler(void* address) {
     if (!m_handlerHandles.count(address)) {
         return Err("Handler does not exist at address");
     }
-
-    return Ok(m_handlerHandles[address]);
+    return Ok(m_handlerHandles[address].first);
 }
 
-Result<> Loader::Impl::removeHandler(void* address) {
+Result<tulip::hook::HandlerHandle> Loader::Impl::getOrCreateHandler(void* address, tulip::hook::HandlerMetadata const& metadata) {
+    if (m_handlerHandles.count(address) && m_handlerHandles[address].second > 0) {
+        m_handlerHandles[address].second++;
+        return Ok(m_handlerHandles[address].first);
+    }
+    tulip::hook::HandlerHandle handle;
+    GEODE_UNWRAP_INTO(handle, tulip::hook::createHandler(address, metadata));
+
+    m_handlerHandles[address].first = handle;
+    m_handlerHandles[address].second = 1;
+    return Ok(handle);
+}
+
+Result<tulip::hook::HandlerHandle> Loader::Impl::getAndDecreaseHandler(void* address) {
     if (!m_handlerHandles.count(address)) {
         return Err("Handler does not exist at address");
     }
+    auto handle = m_handlerHandles[address].first;
+    m_handlerHandles[address].second--;
+    return Ok(handle);
+}
 
-    auto handle = m_handlerHandles[address];
-    GEODE_UNWRAP(tulip::hook::removeHandler(handle));
-    m_handlerHandles.erase(address);
+Result<> Loader::Impl::removeHandlerIfNeeded(void* address) {
+    if (!m_handlerHandles.count(address)) {
+        return Err("Handler does not exist at address");
+    }
+    auto handle = m_handlerHandles[address].first;
+    if (m_handlerHandles[address].second == 0) {
+        GEODE_UNWRAP(tulip::hook::removeHandler(handle));
+    }
     return Ok();
+}
+
+bool Loader::Impl::isSafeMode() const {
+    return m_forceSafeMode || this->getLaunchFlag("safe-mode");
+}
+
+void Loader::Impl::forceSafeMode() {
+    m_forceSafeMode = true;
+}
+
+void Loader::Impl::installModManuallyFromBytes(std::span<const std::uint8_t> bytes, std::function<void()> after) {
+    ByteVector byteVec{bytes.begin(), bytes.end()};
+    auto res = file::Unzip::create(byteVec).andThen([](auto unzip) {
+        return ModMetadata::createFromGeodeZip(unzip);
+    });
+    if (!res) {
+        FLAlertLayer::create(
+            "Invalid File",
+            fmt::format(
+                "The file is not a valid Geode mod: {}",
+                res.unwrapErr()
+            ).c_str(),
+            "OK"
+        )->show();
+        return;
+    }
+
+    auto meta = res.unwrap();
+
+    auto check = meta.checkTargetVersions();
+    if (!check) {
+        FLAlertLayer::create(
+            "Invalid Mod Version",
+            fmt::format(
+                "The mod <cy>{}</c> can not be installed: {}",
+                meta.getID(),
+                check.unwrapErr()
+            ).c_str(),
+            "OK"
+        )->show();
+
+        return;
+    }
+
+    auto doInstallModFromFile = [this, byteVec, meta, after]() {
+        std::error_code ec;
+
+        static size_t MAX_ATTEMPTS = 10;
+
+        // Figure out a free path to install to
+        auto installTo = dirs::getModsDir() / fmt::format("{}.geode", meta.getID());
+        size_t counter = 0;
+        while (std::filesystem::exists(installTo, ec) && counter < MAX_ATTEMPTS) {
+            installTo = dirs::getModsDir() / fmt::format("{}-{}.geode", meta.getID(), counter);
+            counter += 1;
+        }
+
+        // This is incredibly unlikely but theoretically possible
+        if (counter >= MAX_ATTEMPTS) {
+            FLAlertLayer::create(
+                "Unable to Install",
+                fmt::format(
+                    "Unable to install mod <co>{}</c>: Can't find a free filename!",
+                    meta.getID()
+                ).c_str(),
+                "OK"
+            )->show();
+            return;
+        }
+
+        // Actually copy the file over to the install directory
+        auto writeRes = file::writeBinary(installTo, byteVec);
+        if (!writeRes) {
+            FLAlertLayer::create(
+                "Unable to Install",
+                fmt::format(
+                    "Unable to install mod <co>{}</c>: {}",
+                    meta.getID(), writeRes.unwrapErr()
+                ).c_str(),
+                "OK"
+            )->show();
+            return;
+        }
+
+        // Mark an updated mod as updated or add to the mods list
+        if (m_mods.contains(meta.getID())) {
+            m_mods.at(meta.getID())->m_impl->m_requestedAction = ModRequestedAction::Update;
+        }
+        // Otherwise add a new Mod
+        // This should be safe as all of the scary stuff in setup() is only relevant
+        // for mods that are actually running
+        else {
+            auto mod = new Mod(meta);
+            auto res = mod->m_impl->setup();
+            if (!res) {
+                log::error("Unable to set up manually installed mod: {}", res.unwrapErr());
+            }
+            (void)mod->enable();
+            m_mods.insert({ meta.getID(), mod });
+        }
+
+        if (after) after();
+
+        auto installMessage = fmt::format(
+            "Mod <co>{}</c> has been successfully installed from file!",
+            meta.getName()
+        );
+        FLAlertLayer::create(
+            "Mod Installed",
+            installMessage.c_str(),
+            "OK"
+        )->show();
+    };
+
+    if (auto existing = Loader::get()->getInstalledMod(meta.getID())) {
+        createQuickPopup(
+            "Already Installed",
+            fmt::format(
+                "The mod <cy>{}</c> <cj>{}</c> has already been installed "
+                "as version <cl>{}</c>. Do you want to <co>replace the "
+                "installed version with the file</c>?",
+                meta.getID(), meta.getVersion(),
+                existing->getVersion()
+            ),
+            "Cancel", "Replace",
+            [doInstallModFromFile, byteVec, existing, meta](auto, bool btn2) mutable {
+                std::error_code ec;
+                std::filesystem::remove(existing->getPackagePath(), ec);
+                if (ec) {
+                    FLAlertLayer::create(
+                        "Unable to Uninstall",
+                        fmt::format(
+                            "Unable to uninstall <cy>{}</c>: {} (Error code <cr>{}</c>)",
+                            existing->getID(), ec.message(), ec.value()
+                        ).c_str(),
+                        "OK"
+                    )->show();
+                    return;
+                }
+                doInstallModFromFile();
+            }
+        );
+        return;
+    }
+
+    doInstallModFromFile();
+}
+
+void Loader::Impl::installModManuallyFromFile(std::filesystem::path const& path, std::function<void()> after) {
+    auto res = ModMetadata::createFromGeodeFile(path);
+    if (!res) {
+        FLAlertLayer::create(
+            "Invalid File",
+            fmt::format(
+                "The path <cy>'{}'</c> is not a valid Geode mod: {}",
+                path.string(),
+                res.unwrapErr()
+            ).c_str(),
+            "OK"
+        )->show();
+        return;
+    }
+    auto meta = res.unwrap();
+
+    auto check = meta.checkTargetVersions();
+    if (!check) {
+        FLAlertLayer::create(
+            "Invalid Mod Version",
+            fmt::format(
+                "The mod <cy>{}</c> can not be installed: {}",
+                meta.getID(),
+                check.unwrapErr()
+            ).c_str(),
+            "OK"
+        )->show();
+
+        return;
+    }
+
+    auto doInstallModFromFile = [this, path, meta, after]() {
+        std::error_code ec;
+
+        static size_t MAX_ATTEMPTS = 10;
+
+        // Figure out a free path to install to
+        auto installTo = dirs::getModsDir() / fmt::format("{}.geode", meta.getID());
+        size_t counter = 0;
+        while (std::filesystem::exists(installTo, ec) && counter < MAX_ATTEMPTS) {
+            installTo = dirs::getModsDir() / fmt::format("{}-{}.geode", meta.getID(), counter);
+            counter += 1;
+        }
+
+        // This is incredibly unlikely but theoretically possible
+        if (counter >= MAX_ATTEMPTS) {
+            FLAlertLayer::create(
+                "Unable to Install",
+                fmt::format(
+                    "Unable to install mod <co>{}</c>: Can't find a free filename!",
+                    meta.getID()
+                ).c_str(),
+                "OK"
+            )->show();
+            return;
+        }
+
+        // Actually copy the file over to the install directory
+        std::filesystem::copy_file(path, installTo, ec);
+        if (ec) {
+            FLAlertLayer::create(
+                "Unable to Install",
+                fmt::format(
+                    "Unable to install mod <co>{}</c>: {} (Error code <cr>{}</c>)",
+                    meta.getID(), ec.message(), ec.value()
+                ).c_str(),
+                "OK"
+            )->show();
+            return;
+        }
+
+        // Mark an updated mod as updated or add to the mods list
+        if (m_mods.contains(meta.getID())) {
+            m_mods.at(meta.getID())->m_impl->m_requestedAction = ModRequestedAction::Update;
+        }
+        // Otherwise add a new Mod
+        // This should be safe as all of the scary stuff in setup() is only relevant
+        // for mods that are actually running
+        else {
+            auto mod = new Mod(meta);
+            auto res = mod->m_impl->setup();
+            if (!res) {
+                log::error("Unable to set up manually installed mod: {}", res.unwrapErr());
+            }
+            (void)mod->enable();
+            m_mods.insert({ meta.getID(), mod });
+        }
+
+        if (after) after();
+
+        // No need for the user to go and manually clean up the file
+        createQuickPopup(
+            "Mod Installed",
+            fmt::format(
+                "Mod <co>{}</c> has been successfully installed from file! "
+                "<cy>Do you want to delete the original file?</c>",
+                meta.getName()
+            ),
+            "OK", "Delete File",
+            [path](auto, bool btn2) {
+                if (btn2) {
+                    std::error_code ec;
+                    std::filesystem::remove(path, ec);
+                    if (ec) {
+                        FLAlertLayer::create(
+                            "Unable to Delete",
+                            fmt::format(
+                                "Unable to delete <cy>{}</c>: {} (Error code <cr>{}</c>)",
+                                path, ec.message(), ec.value()
+                            ).c_str(),
+                            "OK"
+                        )->show();
+                    }
+                    // No need to show a confirmation popup if successful since that's
+                    // to be assumed via pressing the button on the previous popup
+                }
+            }
+        );
+    };
+
+    if (auto existing = Loader::get()->getInstalledMod(meta.getID())) {
+        createQuickPopup(
+            "Already Installed",
+            fmt::format(
+                "The mod <cy>{}</c> <cj>{}</c> has already been installed "
+                "as version <cl>{}</c>. Do you want to <co>replace the "
+                "installed version with the file</c>?",
+                meta.getID(), meta.getVersion(),
+                existing->getVersion()
+            ),
+            "Cancel", "Replace",
+            [doInstallModFromFile, path, existing, meta](auto, bool btn2) mutable {
+                std::error_code ec;
+                std::filesystem::remove(existing->getPackagePath(), ec);
+                if (ec) {
+                    FLAlertLayer::create(
+                        "Unable to Uninstall",
+                        fmt::format(
+                            "Unable to uninstall <cy>{}</c>: {} (Error code <cr>{}</c>)",
+                            existing->getID(), ec.message(), ec.value()
+                        ).c_str(),
+                        "OK"
+                    )->show();
+                    return;
+                }
+                doInstallModFromFile();
+            }
+        );
+        return;
+    }
+
+    doInstallModFromFile();
+}
+
+bool Loader::Impl::isRestartRequired() const {
+    for (auto mod : Loader::get()->getAllMods()) {
+        if (mod->getRequestedAction() != ModRequestedAction::None) {
+            return true;
+        }
+        if (ModSettingsManager::from(mod)->restartRequired()) {
+            return true;
+        }
+    }
+    if (server::ModDownloadManager::get()->wantsRestart()) {
+        return true;
+    }
+    return false;
+}
+
+bool Loader::Impl::hasExternalMods() const {
+    return m_hasExternalMods;
+}
+
+bool Loader::Impl::isPatchless() const {
+    return m_isPatchless;
+}
+
+std::optional<std::string> Loader::Impl::getBinaryPath() const {
+    return m_binaryPath;
 }

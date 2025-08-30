@@ -36,11 +36,31 @@ THE SOFTWARE.
 #include <GLES2/gl2.h>
 #endif // EMSCRIPTEN
 
-RT_ADD(
-    class DS_Dictionary;
-)
+// @note RobTop Addition
+class DS_Dictionary;
+
+namespace geode {
+    /**
+     * This class is used to fix the problem of destructor recursion.
+     */
+    class GEODE_DLL DestructorLock {
+    public:
+        static bool isLocked(void* self);
+        static void addLock(void* self);
+        static void removeLock(void* self);
+    };
+}
 
 NS_CC_BEGIN
+
+class [[deprecated("Please update to newest bindings, this will be removed in v5")]] CCDestructor {
+public:
+	static std::unordered_map<void*, bool>& destructorLock();
+public:
+	static bool& globalLock();
+	static bool& lock(void* self);
+	~CCDestructor();
+};
 
 /**
  * @addtogroup base_nodes
@@ -73,24 +93,12 @@ public:
     virtual CCObject* copyWithZone(CCZone* pZone)  { return 0; }
 };
 
-/**
- * This class is used to fix the problem of destructor recursion.
- */
-class CCDestructor : public CCCopying {
-private:
-	static std::unordered_map<void*, bool>& destructorLock();
-public:
-	static bool& globalLock();
-	static bool& lock(void* self);
-	~CCDestructor();
-};
-
 #pragma warning(push)
 #pragma warning(disable: 4275)
 /**
  * @js NA
  */
-class CC_DLL CCObject : public CCDestructor
+class CC_DLL CCObject : public CCCopying
 {
     GEODE_FRIEND_MODIFY
 public:
@@ -98,16 +106,14 @@ public:
     unsigned int        m_uID;
     // Lua reference id
     int                 m_nLuaID;
-protected:
-    // the object's tag
-    int m_nTag;
+public:
     // count of references
     unsigned int        m_uReference;
+
     // count of autorelease
     unsigned int        m_uAutoReleaseCount;
 
     CCObjectType m_eObjType;
-    int m_nUnknown;
 public:
 	GEODE_CUSTOM_CONSTRUCTOR_BEGIN(CCObject)
     CCObject(void);
@@ -115,7 +121,7 @@ public:
      *  @lua NA
      */
     virtual ~CCObject(void);
-    
+
     void release(void);
     void retain(void);
     CCObject* autorelease(void);
@@ -129,24 +135,15 @@ public:
     virtual void acceptVisitor(CCDataVisitor &visitor);
 
     virtual void update(float dt) {CC_UNUSED_PARAM(dt);};
-    
-    virtual void encodeWithCoder(DS_Dictionary*);
 
-    static CCObject* createWithCoder(DS_Dictionary*);
-    
+    virtual CCObjectType getObjType() const;
+
+    virtual void setObjType(CCObjectType type);
+
+    virtual void encodeWithCoder(DS_Dictionary*);
     virtual bool canEncode();
 
-    inline CCObjectType getObjType() const {
-        return m_eObjType;
-    }
- 
-    virtual int getTag() const;
-
-    virtual void setTag(int nTag);
-    
-    inline void setObjType(CCObjectType type) {
-        m_eObjType = type;
-    }
+    static CCObject* createWithCoder(DS_Dictionary*);
 
     friend class CCAutoreleasePool;
 };

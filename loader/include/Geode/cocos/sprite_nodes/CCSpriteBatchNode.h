@@ -57,7 +57,7 @@ class CCSprite;
 * Limitations:
 *  - The only object that is accepted as child (or grandchild, grand-grandchild, etc...) is CCSprite or any subclass of CCSprite. eg: particles, labels and layer can't be added to a CCSpriteBatchNode.
 *  - Either all its children are Aliased or Antialiased. It can't be a mix. This is because "alias" is a property of the texture, and all the sprites share the same texture.
-* 
+*
 * @since v0.7.1
 */
 class CC_DLL CCSpriteBatchNode : public CCNode, public CCTextureProtocol
@@ -76,11 +76,11 @@ public:
     ~CCSpriteBatchNode();
 
     // property
-    
+
     // retain
     inline CCTextureAtlas* getTextureAtlas(void) { return m_pobTextureAtlas; }
-    inline void setTextureAtlas(CCTextureAtlas* textureAtlas) 
-    { 
+    inline void setTextureAtlas(CCTextureAtlas* textureAtlas)
+    {
         if (textureAtlas != m_pobTextureAtlas)
         {
             CC_SAFE_RETAIN(textureAtlas);
@@ -148,7 +148,7 @@ public:
     virtual void addChild(CCNode * child, int zOrder);
     virtual void addChild(CCNode * child, int zOrder, int tag);
     virtual void reorderChild(CCNode * child, int zOrder);
-        
+
     virtual void removeChild(CCNode* child, bool cleanup);
     virtual void removeAllChildrenWithCleanup(bool cleanup);
     virtual void sortAllChildren();
@@ -170,33 +170,32 @@ protected:
     */
     CCSpriteBatchNode * addSpriteWithoutQuad(CCSprite*child, unsigned int z, int aTag);
 
-    RT_ADD(
-        bool getManualSortChildren(void)const;
-        int getAtlasCapacity(void);
-    public:
-        int getUsedAtlasCapacity(void);
-        void increaseAtlasCapacity(unsigned int);
-    protected:
-        void manualSortAllChildren(void);
-        void setManualSortChildren(bool);
-    );
+    virtual bool getManualSortChildren(void) const;
+    virtual void setManualSortChildren(bool);
+    void manualSortAllChildren(void);
+    int getAtlasCapacity(void);
+
+public:
+    int getUsedAtlasCapacity(void);
+    void increaseAtlasCapacity(unsigned int);
+    void increaseAtlasCapacity();
 
 private:
     void updateAtlasIndex(CCSprite* sprite, int* curIndex);
     void swap(int oldIndex, int newIndex);
     void updateBlendFunc();
 
-protected:
+public:
     CCTextureAtlas *m_pobTextureAtlas;
     ccBlendFunc m_blendFunc;
 
     // all descendants: children, gran children, etc...
     CCArray* m_pobDescendants;
 
-    RT_ADD(
-        bool m_bManualSortChildren;
-        bool m_bManualSortAllChildrenDirty;
-    )
+    // @note RobTop Addition
+    bool m_bManualSortChildren;
+    // @note RobTop Addition
+    bool m_bManualSortAllChildrenDirty;
 };
 
 // end of sprite_nodes group

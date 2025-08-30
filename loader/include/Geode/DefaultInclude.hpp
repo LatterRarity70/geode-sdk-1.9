@@ -5,21 +5,16 @@
 #include <Geode/platform/platform.hpp>
 #include <variant>
 
-#define GEODE_STATIC_PTR(type, name)          \
-    static type* s_##name;                    \
-    inline type* name() {                     \
-        if (!s_##name) s_##name = new type(); \
-        return s_##name;                      \
-    }
+#if defined(GEODE_EXPOSE_SECRET_INTERNALS_IN_HEADERS_DO_NOT_DEFINE_PLEASE)
+    #if !defined(__clang__)
+        #error Geode Loader only compiles with Clang.
+    #endif
+#endif
 
-#define GEODE_STATIC_VAR(type, name) \
-    inline type& name() {            \
-        static type s_##name;        \
-        return s_##name;             \
-    }
-
-#define GEODE_WRAPPER_CONCAT(x, y) x##y
-#define GEODE_CONCAT(x, y) GEODE_WRAPPER_CONCAT(x, y)
+#if !defined(GEODE_CONCAT)
+    #define GEODE_WRAPPER_CONCAT(x, y) x##y
+    #define GEODE_CONCAT(x, y) GEODE_WRAPPER_CONCAT(x, y)
+#endif
 
 #define GEODE_WRAPPER_STR(...) #__VA_ARGS__
 #define GEODE_STR(...) GEODE_WRAPPER_STR(__VA_ARGS__)
@@ -77,33 +72,19 @@ namespace geode {
     Class_(geode::CutoffConstructorType, void*)
 
 #define GEODE_CUTOFF_CONSTRUCTOR_BEGIN(Class_)                      \
-    GEODE_MACOS(GEODE_FILL_CONSTRUCTOR(Class_, 0){})                \
-    GEODE_IOS(GEODE_FILL_CONSTRUCTOR(Class_, 0){})                  \
-    GEODE_WINDOWS(Class_(geode::CutoffConstructorType, size_t fill) \
-                  : Class_() {})
+    GEODE_FILL_CONSTRUCTOR(Class_, 0){}
 
 #define GEODE_CUTOFF_CONSTRUCTOR_COCOS(Class_, Base_)               \
-    GEODE_MACOS(Class_(geode::CutoffConstructorType, size_t fill)   \
-                : Base_(geode::CutoffConstructor, fill){})          \
-    GEODE_IOS(Class_(geode::CutoffConstructorType, size_t fill)     \
-              : Base_(geode::CutoffConstructor, fill){})            \
-    GEODE_WINDOWS(Class_(geode::CutoffConstructorType, size_t fill) \
-                  : Class_() {})
+    Class_(geode::CutoffConstructorType, size_t fill)               \
+    : Base_(geode::CutoffConstructor, fill){}
 
 #define GEODE_CUTOFF_CONSTRUCTOR_GD(Class_, Base_)                  \
-    GEODE_WINDOWS(Class_(geode::CutoffConstructorType, size_t fill) \
-                  : Base_(geode::CutoffConstructor, fill){})        \
-    GEODE_MACOS(Class_(geode::CutoffConstructorType, size_t fill)   \
-                : Base_(geode::CutoffConstructor, fill){})          \
-    GEODE_IOS(Class_(geode::CutoffConstructorType, size_t fill)     \
-              : Base_(geode::CutoffConstructor, fill){})
+    Class_(geode::CutoffConstructorType, size_t fill)               \
+    : Base_(geode::CutoffConstructor, fill) {}
 
-#define GEODE_CUTOFF_CONSTRUCTOR_CUTOFF(Class_, Base_)                       \
-    GEODE_WINDOWS(GEODE_FILL_CONSTRUCTOR(Class_, sizeof(Base_)) : Base_(){}) \
-    GEODE_MACOS(Class_(geode::CutoffConstructorType, size_t fill)            \
-                : Base_(geode::CutoffConstructor, fill){})                   \
-    GEODE_IOS(Class_(geode::CutoffConstructorType, size_t fill)              \
-              : Base_(geode::CutoffConstructor, fill){})
+#define GEODE_CUTOFF_CONSTRUCTOR_CUTOFF(Class_, Base_)              \
+    Class_(geode::CutoffConstructorType, size_t fill)               \
+    : Base_(geode::CutoffConstructor, fill) {}
 
 #define GEODE_NUMBER_OF_ARGS(...) \
     GEODE_EXPAND(GEODE_NUMBER_OF_ARGS_(__VA_ARGS__, GEODE_NUMBER_SEQUENCE(), ))
@@ -192,6 +173,33 @@ namespace geode {
          0);                                                                                      \
     template <class>                                                                              \
     void GEODE_CONCAT(geodeExecFunction, __LINE__)()
+
+#define GEODE_FORWARD_COMPAT_DISABLE_HOOKS_INNER(message) \
+    if (Loader::get()->isForwardCompatMode()) {           \
+        if (strlen(message)) {                            \
+            log::warn("[Forward Compat] " message);       \
+        }                                                 \
+        for (const auto& [_, hook] : self.m_hooks) {      \
+            hook->setAutoEnable(false);                   \
+        }                                                 \
+    }
+#define GEODE_FORWARD_COMPAT_ENABLE_HOOKS_INNER(message)  \
+    if (!Loader::get()->isForwardCompatMode()) {          \
+        if (strlen(message)) {                            \
+            log::warn("[Forward Compat] " message);       \
+        }                                                 \
+        for (const auto& [_, hook] : self.m_hooks) {      \
+            hook->setAutoEnable(false);                   \
+        }                                                 \
+    }
+#define GEODE_FORWARD_COMPAT_DISABLE_HOOKS(message)       \
+    static void onModify(const auto& self) {              \
+        GEODE_FORWARD_COMPAT_DISABLE_HOOKS_INNER(message) \
+    }
+#define GEODE_FORWARD_COMPAT_ENABLE_HOOKS(message)        \
+    static void onModify(const auto& self) {              \
+        GEODE_FORWARD_COMPAT_ENABLE_HOOKS_INNER(message)  \
+    }
 
 // #define GEODE_NEST1(macro, begin)           \
 // macro(GEODE_CONCAT(begin, 0)),                        \
